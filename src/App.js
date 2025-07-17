@@ -9,13 +9,14 @@ function App() {
   const [apiKey, setApiKey] = useState('');
   const [apiKeyValid, setApiKeyValid] = useState(false);
   const [file, setFile] = useState(null);
-  const [originalFile, setOriginalFile] = useState(null); // Store original file reference
+  const [originalFile, setOriginalFile] = useState(null);
   const [response, setResponse] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [step, setStep] = useState('api-key');
-  const [compressionInfo, setCompressionInfo] = useState(null); // Track compression results
+  const [compressionInfo, setCompressionInfo] = useState(null);
+  const [debugInfo, setDebugInfo] = useState(null);
 
   const validateApiKey = (key) => {
     return key && key.startsWith('sk-ant-') && key.length > 20;
@@ -59,7 +60,7 @@ function App() {
     }
   };
 
-  // Enhanced file change handler with compression (Option 2)
+  // Enhanced file change handler with better debugging
   const handleFileChange = async (e) => {
     const selectedFile = e.target.files[0];
     if (!selectedFile || selectedFile.type !== 'application/pdf') {
@@ -69,21 +70,24 @@ function App() {
       return;
     }
 
+    console.log('=== FILE SELECTED ===');
+    console.log('File name:', selectedFile.name);
+    console.log('File size:', (selectedFile.size / 1024 / 1024).toFixed(2), 'MB');
+    console.log('File type:', selectedFile.type);
+
     setError("");
     setLoading(true);
     setProgress(0);
     setCompressionInfo(null);
+    setDebugInfo(null);
     
     try {
       const fileSizeMB = selectedFile.size / 1024 / 1024;
-      console.log(`Selected file: ${selectedFile.name}, Size: ${fileSizeMB.toFixed(2)}MB`);
-      
-      // Store original file reference
       setOriginalFile(selectedFile);
       
       // If file is large (>5MB), compress it first
       if (selectedFile.size > 5 * 1024 * 1024) {
-        console.log('File is large, compressing...');
+        console.log('File is large, attempting compression...');
         
         const compressedFile = await PDFUtils.compressPDF(selectedFile, 0.7, (progress) => {
           setProgress(progress);
@@ -100,9 +104,8 @@ function App() {
         });
         
         setFile(compressedFile);
-        console.log(`Compressed: ${originalSizeMB.toFixed(2)}MB → ${compressedSizeMB.toFixed(2)}MB (${compressionRatio.toFixed(1)}%)`);
+        console.log('Compression completed successfully');
       } else {
-        // File is small enough, use as-is
         setFile(selectedFile);
         console.log('File size is acceptable, no compression needed');
       }
@@ -110,7 +113,10 @@ function App() {
       setStep('confirm');
       
     } catch (error) {
-      console.error('File processing error:', error);
+      console.error('=== FILE PROCESSING ERROR ===');
+      console.error('Error:', error);
+      console.error('Stack:', error.stack);
+      
       setError(`File processing failed: ${error.message}`);
       setFile(null);
       setOriginalFile(null);
@@ -125,7 +131,6 @@ function App() {
     e.stopPropagation();
   };
 
-  // Enhanced drop handler with compression (Option 2)
   const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -138,29 +143,54 @@ function App() {
       return;
     }
 
-    // Use the same logic as handleFileChange
     const event = { target: { files: [droppedFile] } };
     await handleFileChange(event);
   };
 
-  // Enhanced text extraction using our utilities
+  // Enhanced text extraction with robust debugging
   const extractTextClientSide = async (file) => {
     try {
-      console.log('Extracting text with enhanced processing...');
+      console.log('=== STARTING TEXT EXTRACTION ===');
+      console.log('File for extraction:', file.name);
+      console.log('File size:', (file.size / 1024 / 1024).toFixed(2), 'MB');
       
-      const text = await PDFUtils.extractTextAdvanced(file, (progress) => {
-        setProgress(progress * 0.7); // Use 70% of progress bar for extraction
+      // Try the robust extraction method
+      const text = await PDFUtils.extractTextRobust(file, (progress) => {
+        console.log('Extraction progress:', progress + '%');
+        setProgress(progress * 0.7);
+      });
+      
+      console.log('=== EXTRACTION RESULTS ===');
+      console.log('Text length:', text.length);
+      console.log('Text preview:', text.substring(0, 200));
+      
+      setDebugInfo({
+        textLength: text.length,
+        preview: text.substring(0, 500),
+        extractionMethod: 'robust'
       });
       
       if (!text || text.trim().length === 0) {
         throw new Error('No text found in PDF. This might be a scanned document or contain only images.');
       }
       
-      console.log('Enhanced extraction completed. Text length:', text.length);
+      if (text.trim().length < 50) {
+        throw new Error(`Very little text extracted (${text.trim().length} characters). PDF might be image-based or corrupted.`);
+      }
+      
+      console.log('Text extraction completed successfully');
       return text;
       
     } catch (error) {
-      console.error('Enhanced extraction failed:', error);
+      console.error('=== TEXT EXTRACTION ERROR ===');
+      console.error('Error:', error);
+      console.error('Stack:', error.stack);
+      
+      setDebugInfo({
+        error: error.message,
+        extractionMethod: 'failed'
+      });
+      
       throw error;
     }
   };
@@ -174,26 +204,12 @@ function App() {
     setFile(null);
     setOriginalFile(null);
     setCompressionInfo(null);
+    setDebugInfo(null);
     setStep('upload');
     const fileInput = document.getElementById('file-input');
     if (fileInput) fileInput.value = '';
   };
 
-  const simulateProgress = () => {
-    setProgress(0);
-    const interval = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 90) {
-          clearInterval(interval);
-          return 90;
-        }
-        return prev + Math.random() * 10;
-      });
-    }, 1000);
-    return interval;
-  };
-
-  // Updated upload handler that uses enhanced extraction
   const handleUpload = async () => {
     if (!file) {
       setError("Please select a PDF file first.");
@@ -203,18 +219,15 @@ function App() {
     setLoading(true);
     setError("");
     setResponse("");
-    
-    const progressInterval = simulateProgress();
+    setProgress(0);
     
     try {
+      console.log('=== UPLOAD PROCESS START ===');
+      
       // Extract text using enhanced method
       const extractedText = await extractTextClientSide(file);
       
-      if (!extractedText || extractedText.trim().length === 0) {
-        throw new Error('No text found in PDF. This might be a scanned document or contain only images.');
-      }
-      
-      // Update progress
+      console.log('Text extracted, length:', extractedText.length);
       setProgress(75);
       
       // Send only the text to the server
@@ -229,13 +242,14 @@ function App() {
         timeout: 60000,
       });
       
-      clearInterval(progressInterval);
       setProgress(100);
       setResponse(res.data.result);
       setStep('results');
       
     } catch (err) {
-      clearInterval(progressInterval);
+      console.error('=== UPLOAD ERROR ===');
+      console.error('Error:', err);
+      
       setProgress(0);
       
       if (err.response?.data?.error) {
@@ -243,7 +257,7 @@ function App() {
       } else {
         setError(`Processing failed: ${err.message || "Please try again."}`);
       }
-      setStep('upload'); // Go back to upload step on error
+      setStep('upload');
     } finally {
       setLoading(false);
     }
@@ -267,6 +281,7 @@ function App() {
     setFile(null);
     setOriginalFile(null);
     setCompressionInfo(null);
+    setDebugInfo(null);
     setResponse("");
     setError("");
     setProgress(0);
@@ -282,6 +297,7 @@ function App() {
     setFile(null);
     setOriginalFile(null);
     setCompressionInfo(null);
+    setDebugInfo(null);
     setResponse('');
     setError('');
     setProgress(0);
@@ -443,7 +459,7 @@ function App() {
                   Select or drag and drop a PDF file containing course evaluations
                   <br />
                   <small style={{ color: '#718096' }}>
-                    Large files will be automatically compressed for optimal processing
+                    Large files will be automatically compressed • Debug mode enabled
                   </small>
                 </p>
                 
@@ -492,6 +508,48 @@ function App() {
                       <line x1="9" y1="9" x2="15" y2="15"/>
                     </svg>
                     {error}
+                    <br />
+                    <small style={{ marginTop: '8px', display: 'block' }}>
+                      Check the browser console (F12) for detailed error information
+                    </small>
+                  </div>
+                )}
+
+                {debugInfo && (
+                  <div style={{ 
+                    background: '#f8f9fa', 
+                    border: '1px solid #dee2e6', 
+                    borderRadius: '4px', 
+                    padding: '1rem', 
+                    marginTop: '1rem',
+                    textAlign: 'left',
+                    fontSize: '0.9rem'
+                  }}>
+                    <h4 style={{ margin: '0 0 0.5rem 0', color: '#495057' }}>Debug Information:</h4>
+                    {debugInfo.error ? (
+                      <p style={{ color: '#dc3545', margin: '0' }}>Error: {debugInfo.error}</p>
+                    ) : (
+                      <>
+                        <p style={{ margin: '0.25rem 0' }}>Text length: {debugInfo.textLength}</p>
+                        <p style={{ margin: '0.25rem 0' }}>Method: {debugInfo.extractionMethod}</p>
+                        <details style={{ marginTop: '0.5rem' }}>
+                          <summary style={{ cursor: 'pointer', color: '#007bff' }}>Text Preview</summary>
+                          <pre style={{ 
+                            whiteSpace: 'pre-wrap', 
+                            fontSize: '0.8rem', 
+                            background: '#ffffff',
+                            padding: '0.5rem',
+                            marginTop: '0.5rem',
+                            border: '1px solid #dee2e6',
+                            borderRadius: '4px',
+                            maxHeight: '200px',
+                            overflow: 'auto'
+                          }}>
+                            {debugInfo.preview}
+                          </pre>
+                        </details>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -506,7 +564,7 @@ function App() {
     );
   }
 
-  // Confirmation Step - Enhanced with compression info
+  // Confirmation Step
   if (step === 'confirm') {
     return (
       <div className="app">
