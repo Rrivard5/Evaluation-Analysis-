@@ -11,7 +11,6 @@ function App() {
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [step, setStep] = useState('api-key');
-  const [compressionStatus, setCompressionStatus] = useState('');
 
   const validateApiKey = (key) => {
     return key && key.startsWith('sk-ant-') && key.length > 20;
@@ -55,216 +54,53 @@ function App() {
     }
   };
 
-  const compressPDF = async (file, maxSizeBytes = 4 * 1024 * 1024) => {
+  // New function for client-side text extraction
+  const extractTextClientSide = async (file) => {
     try {
-      console.log('Starting PDF compression...');
-      console.log('Original file size:', Math.round(file.size / 1024 / 1024), 'MB');
+      console.log('Extracting text client-side...');
       
-      if (file.size <= maxSizeBytes) {
-        console.log('File is already small enough');
-        return file;
+      // Dynamically import pdf.js
+      const pdfjsLib = await import('pdfjs-dist/webpack');
+      
+      // Configure worker
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+      
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      
+      console.log('PDF loaded, pages:', pdf.numPages);
+      
+      let fullText = '';
+      
+      // Extract text from each page
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        fullText += pageText + '\n\n';
+        
+        // Update progress
+        setProgress((i / pdf.numPages) * 50); // First 50% for extraction
       }
       
-      // Dynamically import PDF-lib
-      const { PDFDocument } = await import('pdf-lib');
+      console.log('Text extracted, length:', fullText.length);
       
-      // Read the PDF
-      const existingPdfBytes = await file.arrayBuffer();
-      const pdfDoc = await PDFDocument.load(existingPdfBytes);
-      
-      console.log('PDF loaded successfully');
-      console.log('Original pages:', pdfDoc.getPageCount());
-      
-      // Compression options that preserve text
-      const options = {
-        useObjectStreams: false,
-        addDefaultPage: false,
-        objectsPerTick: 50
-      };
-      
-      // First attempt - basic compression
-      let compressedBytes = await pdfDoc.save(options);
-      console.log('First compression attempt:', Math.round(compressedBytes.length / 1024 / 1024), 'MB');
-      
-      // If still too large, try more aggressive compression
-      if (compressedBytes.length > maxSizeBytes) {
-        console.log('Trying more aggressive compression...');
-        
-        // Remove metadata but keep text
-        pdfDoc.setTitle('');
-        pdfDoc.setAuthor('');
-        pdfDoc.setSubject('');
-        pdfDoc.setKeywords([]);
-        pdfDoc.setProducer('');
-        pdfDoc.setCreator('');
-        
-        // Save with more aggressive options
-        const aggressiveOptions = {
-          useObjectStreams: true,
-          addDefaultPage: false,
-          objectsPerTick: 100
-        };
-        
-        compressedBytes = await pdfDoc.save(aggressiveOptions);
-        console.log('Aggressive compression result:', Math.round(compressedBytes.length / 1024 / 1024), 'MB');
+      // If text is too long, truncate it
+      const maxTextLength = 50000;
+      if (fullText.length > maxTextLength) {
+        fullText = fullText.substring(0, maxTextLength) + '\n\n[Text truncated due to length]';
+        console.log('Text truncated to:', maxTextLength);
       }
-  // Add these functions to your App.js file, right after the existing compressPDF function
-
-// Add this new function for client-side text extraction
-const extractTextClientSide = async (file) => {
-  try {
-    console.log('Extracting text client-side...');
-    
-    // Dynamically import pdf.js
-    const pdfjsLib = await import('pdfjs-dist/webpack');
-    
-    // Configure worker
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-    
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    
-    console.log('PDF loaded, pages:', pdf.numPages);
-    
-    let fullText = '';
-    
-    // Extract text from each page
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map(item => item.str).join(' ');
-      fullText += pageText + '\n\n';
       
-      // Update progress
-      setProgress((i / pdf.numPages) * 50); // First 50% for extraction
-    }
-    
-    console.log('Text extracted, length:', fullText.length);
-    
-    // If text is too long, truncate it
-    const maxTextLength = 50000;
-    if (fullText.length > maxTextLength) {
-      fullText = fullText.substring(0, maxTextLength) + '\n\n[Text truncated due to length]';
-      console.log('Text truncated to:', maxTextLength);
-    }
-    
-    return fullText;
-    
-  } catch (error) {
-    console.error('Client-side text extraction failed:', error);
-    throw new Error('Failed to extract text from PDF: ' + error.message);
-  }
-};
-
-// REPLACE your existing handleUpload function with this new version
-const handleUpload = async () => {
-  if (!file) {
-    setError("Please select a PDF file first.");
-    return;
-  }
-
-  setLoading(true);
-  setError("");
-  setResponse("");
-  
-  const progressInterval = simulateProgress();
-  
-  try {
-    // Extract text client-side instead of uploading the PDF
-    const extractedText = await extractTextClientSide(file);
-    
-    if (!extractedText || extractedText.trim().length === 0) {
-      throw new Error('No text found in PDF. This might be a scanned document or contain only images.');
-    }
-    
-    // Update progress
-    setProgress(60);
-    
-    // Send only the text to the server
-    const res = await axios.post('/api/process-text', {
-      text: extractedText,
-      apiKey: apiKey,
-      filename: file.name
-    }, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      timeout: 60000,
-    });
-    
-    clearInterval(progressInterval);
-    setProgress(100);
-    setResponse(res.data.result);
-    setStep('results');
-    
-  } catch (err) {
-    clearInterval(progressInterval);
-    setProgress(0);
-    
-    if (err.response?.data?.error) {
-      setError(err.response.data.error);
-    } else {
-      setError(`Processing failed: ${err.message || "Please try again."}`);
-    }
-    setStep('upload'); // Go back to upload step on error
-  } finally {
-    setLoading(false);
-  }
-};
-
-// ALSO UPDATE the handleFileChange function to remove compression
-const handleFileChange = async (e) => {
-  const selectedFile = e.target.files[0];
-  if (!selectedFile || selectedFile.type !== 'application/pdf') {
-    setError("Please select a valid PDF file.");
-    setFile(null);
-    return;
-  }
-
-  setError("");
-  setFile(selectedFile);
-  setStep('confirm');
-  
-  // Show file size info
-  const fileSizeMB = (selectedFile.size / 1024 / 1024).toFixed(2);
-  console.log(`Selected file: ${selectedFile.name}, Size: ${fileSizeMB}MB`);
-};
-
-// UPDATE the handleDrop function similarly
-const handleDrop = async (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  
-  const droppedFile = e.dataTransfer.files[0];
-  if (!droppedFile || droppedFile.type !== 'application/pdf') {
-    setError("Please drop a valid PDF file.");
-    setFile(null);
-    return;
-  }
-
-  // Use the same logic as handleFileChange
-  const event = { target: { files: [droppedFile] } };
-  await handleFileChange(event);
-};    
-      // Create new file object
-      const compressedFile = new File([compressedBytes], file.name, {
-        type: 'application/pdf',
-        lastModified: Date.now(),
-      });
-      
-      const compressionRatio = ((file.size - compressedFile.size) / file.size * 100).toFixed(1);
-      console.log('Compression complete!');
-      console.log('Size reduction:', compressionRatio + '%');
-      console.log('Final size:', Math.round(compressedFile.size / 1024 / 1024), 'MB');
-      
-      return compressedFile;
+      return fullText;
       
     } catch (error) {
-      console.error('PDF compression failed:', error);
-      throw new Error('Failed to compress PDF: ' + error.message);
+      console.error('Client-side text extraction failed:', error);
+      throw new Error('Failed to extract text from PDF: ' + error.message);
     }
   };
 
+  // Simplified file change handler without compression
   const handleFileChange = async (e) => {
     const selectedFile = e.target.files[0];
     if (!selectedFile || selectedFile.type !== 'application/pdf') {
@@ -274,39 +110,12 @@ const handleDrop = async (e) => {
     }
 
     setError("");
-    setCompressionStatus('');
-    setLoading(true);
+    setFile(selectedFile);
+    setStep('confirm');
     
-    try {
-      const maxSize = 4 * 1024 * 1024; // 4MB
-      
-      if (selectedFile.size <= maxSize) {
-        // File is already small enough
-        setFile(selectedFile);
-        setStep('confirm');
-      } else {
-        // File is too large, compress it
-        setCompressionStatus('File is too large, compressing while preserving text...');
-        
-        const compressedFile = await compressPDF(selectedFile);
-        
-        if (compressedFile.size <= maxSize) {
-          setFile(compressedFile);
-          setStep('confirm');
-          const compressionRatio = ((selectedFile.size - compressedFile.size) / selectedFile.size * 100).toFixed(1);
-          setCompressionStatus(`✅ Compression successful! Reduced size by ${compressionRatio}% (${Math.round(selectedFile.size / 1024 / 1024)}MB → ${Math.round(compressedFile.size / 1024 / 1024)}MB)`);
-        } else {
-          setError(`File is still too large after compression (${Math.round(compressedFile.size / 1024 / 1024)}MB). Please try a different file.`);
-          setFile(null);
-        }
-      }
-    } catch (error) {
-      console.error('Compression error:', error);
-      setError("Failed to compress PDF while preserving text. Please try a different file.");
-      setFile(null);
-    } finally {
-      setLoading(false);
-    }
+    // Show file size info
+    const fileSizeMB = (selectedFile.size / 1024 / 1024).toFixed(2);
+    console.log(`Selected file: ${selectedFile.name}, Size: ${fileSizeMB}MB`);
   };
 
   const handleDragOver = (e) => {
@@ -314,6 +123,7 @@ const handleDrop = async (e) => {
     e.stopPropagation();
   };
 
+  // Simplified drop handler without compression
   const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -338,7 +148,6 @@ const handleDrop = async (e) => {
   const handleCancelUpload = () => {
     setFile(null);
     setStep('upload');
-    setCompressionStatus('');
     const fileInput = document.getElementById('file-input');
     if (fileInput) fileInput.value = '';
   };
@@ -357,6 +166,7 @@ const handleDrop = async (e) => {
     return interval;
   };
 
+  // Updated upload handler that uses client-side text extraction
   const handleUpload = async () => {
     if (!file) {
       setError("Please select a PDF file first.");
@@ -370,15 +180,26 @@ const handleDrop = async (e) => {
     const progressInterval = simulateProgress();
     
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('apiKey', apiKey);
+      // Extract text client-side instead of uploading the PDF
+      const extractedText = await extractTextClientSide(file);
       
-      const res = await axios.post('/api/upload', formData, {
+      if (!extractedText || extractedText.trim().length === 0) {
+        throw new Error('No text found in PDF. This might be a scanned document or contain only images.');
+      }
+      
+      // Update progress
+      setProgress(60);
+      
+      // Send only the text to the server
+      const res = await axios.post('/api/process-text', {
+        text: extractedText,
+        apiKey: apiKey,
+        filename: file.name
+      }, {
         headers: {
-          'Content-Type': 'multipart/form-data',
+          'Content-Type': 'application/json',
         },
-        timeout: 120000,
+        timeout: 60000,
       });
       
       clearInterval(progressInterval);
@@ -390,13 +211,12 @@ const handleDrop = async (e) => {
       clearInterval(progressInterval);
       setProgress(0);
       
-      if (err.response?.status === 413) {
-        setError("File too large for server. Please compress your PDF to under 4MB and try again.");
-      } else if (err.response?.data?.error) {
+      if (err.response?.data?.error) {
         setError(err.response.data.error);
       } else {
-        setError(`Upload failed: ${err.message || "Please try again."}`);
+        setError(`Processing failed: ${err.message || "Please try again."}`);
       }
+      setStep('upload'); // Go back to upload step on error
     } finally {
       setLoading(false);
     }
@@ -422,7 +242,6 @@ const handleDrop = async (e) => {
     setError("");
     setProgress(0);
     setStep('upload');
-    setCompressionStatus('');
     const fileInput = document.getElementById('file-input');
     if (fileInput) fileInput.value = '';
   };
@@ -435,7 +254,6 @@ const handleDrop = async (e) => {
     setResponse('');
     setError('');
     setProgress(0);
-    setCompressionStatus('');
   };
 
   // API Key Step
@@ -593,7 +411,7 @@ const handleDrop = async (e) => {
                 <p className="upload-description">
                   Select or drag and drop a PDF file containing course evaluations
                   <br />
-                  <small style={{ color: '#718096' }}>Large files will be automatically compressed while preserving text</small>
+                  <small style={{ color: '#718096' }}>Text will be extracted directly in your browser</small>
                 </p>
                 
                 <div className="file-input-container">
@@ -616,25 +434,6 @@ const handleDrop = async (e) => {
                     )}
                   </label>
                 </div>
-
-                {compressionStatus && (
-                  <div style={{ 
-                    background: '#f0f9ff', 
-                    border: '1px solid #0ea5e9', 
-                    borderRadius: '0.5rem', 
-                    padding: '1rem', 
-                    margin: '1rem 0',
-                    color: '#0c4a6e'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <path d="M12 6v6l4 2"/>
-                      </svg>
-                      {compressionStatus}
-                    </div>
-                  </div>
-                )}
 
                 {error && (
                   <div className="error-message">
@@ -708,31 +507,11 @@ const handleDrop = async (e) => {
                 </div>
 
                 <div style={{ marginBottom: '1rem', color: '#718096' }}>
-                  <p>File size: {file ? Math.round(file.size / 1024) : 0} KB</p>
+                  <p>File size: {file ? (file.size / 1024 / 1024).toFixed(2) : 0} MB</p>
                 </div>
 
-                {compressionStatus && (
-                  <div style={{ 
-                    background: '#f0f9ff', 
-                    border: '1px solid #0ea5e9', 
-                    borderRadius: '0.5rem', 
-                    padding: '1rem', 
-                    margin: '1rem 0',
-                    color: '#0c4a6e',
-                    fontSize: '0.9rem'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M9 12l2 2 4-4"/>
-                        <circle cx="12" cy="12" r="10"/>
-                      </svg>
-                      {compressionStatus}
-                    </div>
-                  </div>
-                )}
-
                 <div style={{ marginBottom: '2rem', color: '#718096' }}>
-                  <p>This will be processed using AI to extract constructive feedback and positive comments.</p>
+                  <p>Text will be extracted in your browser and analyzed using AI to provide constructive feedback.</p>
                 </div>
 
                 <div className="button-group">
