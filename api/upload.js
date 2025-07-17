@@ -3,7 +3,6 @@ const formidable = require('formidable');
 const pdf = require('pdf-parse');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
 export const config = {
   api: {
@@ -13,14 +12,11 @@ export const config = {
 
 const parseForm = (req) => {
   return new Promise((resolve, reject) => {
-    // Use /tmp directory for Vercel
-    const uploadDir = '/tmp';
-    
     const form = formidable.formidable({
       maxFileSize: 10 * 1024 * 1024, // 10MB
       keepExtensions: true,
       multiples: false,
-      uploadDir: uploadDir,
+      uploadDir: '/tmp',
     });
 
     form.parse(req, (err, fields, files) => {
@@ -35,7 +31,14 @@ const parseForm = (req) => {
         fileObj = fileObj[0];
       }
 
-      console.log('File object:', fileObj);
+      console.log('Form parsing successful');
+      console.log('File object:', {
+        originalFilename: fileObj?.originalFilename,
+        filepath: fileObj?.filepath,
+        size: fileObj?.size,
+        mimetype: fileObj?.mimetype
+      });
+
       resolve({ fields, files, fileObj });
     });
   });
@@ -43,41 +46,46 @@ const parseForm = (req) => {
 
 const extractPDFText = async (file) => {
   try {
-    console.log('Extracting PDF text from file:', file);
+    console.log('Starting PDF extraction');
+    console.log('File properties:', {
+      filepath: file.filepath,
+      path: file.path,
+      size: file.size,
+      originalFilename: file.originalFilename,
+      mimetype: file.mimetype,
+      hasBuffer: !!file.buffer
+    });
     
     let dataBuffer;
 
-    // Try different ways to read the file
-    if (file.filepath && fs.existsSync(file.filepath)) {
+    // Try multiple ways to get the file buffer
+    if (file.buffer) {
+      console.log('Using existing buffer');
+      dataBuffer = file.buffer;
+    } else if (file.filepath && fs.existsSync(file.filepath)) {
       console.log('Reading from filepath:', file.filepath);
       dataBuffer = fs.readFileSync(file.filepath);
     } else if (file.path && fs.existsSync(file.path)) {
       console.log('Reading from path:', file.path);
       dataBuffer = fs.readFileSync(file.path);
-    } else if (file.buffer) {
-      console.log('Using buffer directly');
-      dataBuffer = file.buffer;
     } else {
-      // Try to read the file content directly from the request
-      console.log('Attempting to read file content directly');
-      const possiblePaths = [
-        file.filepath,
-        file.path,
-        path.join('/tmp', file.originalFilename || file.name || 'upload.pdf')
-      ];
+      // List all files in /tmp to debug
+      console.log('Files in /tmp:', fs.readdirSync('/tmp'));
       
-      let found = false;
-      for (const filePath of possiblePaths) {
-        if (filePath && fs.existsSync(filePath)) {
-          console.log('Found file at:', filePath);
-          dataBuffer = fs.readFileSync(filePath);
-          found = true;
-          break;
-        }
-      }
+      // Try to find the file by name
+      const tmpFiles = fs.readdirSync('/tmp');
+      const possibleFile = tmpFiles.find(f => 
+        f.includes(file.originalFilename) || 
+        f.includes('upload') ||
+        f.endsWith('.pdf')
+      );
       
-      if (!found) {
-        throw new Error('Could not locate uploaded file. Available properties: ' + Object.keys(file).join(', '));
+      if (possibleFile) {
+        const fullPath = '/tmp/' + possibleFile;
+        console.log('Found possible file:', fullPath);
+        dataBuffer = fs.readFileSync(fullPath);
+      } else {
+        throw new Error('Could not locate uploaded file. Available files: ' + tmpFiles.join(', '));
       }
     }
 
@@ -85,12 +93,61 @@ const extractPDFText = async (file) => {
       throw new Error('File buffer is empty');
     }
 
-    console.log('PDF file read successfully, size:', dataBuffer.length);
-    const data = await pdf(dataBuffer);
-    console.log('PDF parsing complete. Text length:', data.text.length);
-    return data.text;
+    console.log('PDF buffer loaded, size:', dataBuffer.length);
+    
+    // Try pdf-parse with different options
+    let pdfData;
+    try {
+      // First try with default options
+      pdfData = await pdf(dataBuffer);
+    } catch (parseError) {
+      console.log('Default parse failed, trying with options:', parseError.message);
+      
+      // Try with different options
+      pdfData = await pdf(dataBuffer, {
+        max: 0, // Extract all pages
+        normalizeWhitespace: true,
+        disableCombineTextItems: false
+      });
+    }
+
+    console.log('PDF parsed successfully');
+    console.log('Number of pages:', pdfData.numpages);
+    console.log('Text length:', pdfData.text ? pdfData.text.length : 0);
+    console.log('First 200 chars:', pdfData.text ? pdfData.text.substring(0, 200) : 'No text');
+    
+    if (!pdfData.text || pdfData.text.trim().length === 0) {
+      // Try extracting text from individual pages
+      console.log('Attempting page-by-page extraction...');
+      let allText = '';
+      
+      for (let i = 1; i <= pdfData.numpages; i++) {
+        try {
+          const pageData = await pdf(dataBuffer, { 
+            first: i, 
+            last: i,
+            normalizeWhitespace: true
+          });
+          if (pageData.text) {
+            allText += pageData.text + '\n';
+          }
+        } catch (pageError) {
+          console.log(`Error extracting page ${i}:`, pageError.message);
+        }
+      }
+      
+      if (allText.trim().length > 0) {
+        console.log('Successfully extracted text from individual pages');
+        return allText;
+      }
+      
+      throw new Error('PDF appears to contain no extractable text. This might be a scanned document or contain only images.');
+    }
+
+    return pdfData.text;
   } catch (error) {
     console.error('PDF extraction error:', error);
+    console.error('Error stack:', error.stack);
     throw new Error(`Failed to extract text from PDF: ${error.message}`);
   }
 };
@@ -163,7 +220,9 @@ const validateApiKey = (apiKey) => {
 };
 
 export default async function handler(req, res) {
-  console.log('Upload endpoint called with method:', req.method);
+  console.log('=== UPLOAD REQUEST START ===');
+  console.log('Method:', req.method);
+  console.log('Headers:', req.headers);
   
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -181,12 +240,11 @@ export default async function handler(req, res) {
   let uploadedFilePath = null;
 
   try {
-    console.log('Request received, parsing form...');
+    console.log('Parsing form data...');
     const { fields, fileObj } = await parseForm(req);
 
     console.log('Form parsed successfully');
-    console.log('Fields:', fields);
-    console.log('File object keys:', Object.keys(fileObj));
+    console.log('Fields keys:', Object.keys(fields));
 
     const apiKey = Array.isArray(fields.apiKey) ? fields.apiKey[0] : fields.apiKey;
 
@@ -198,19 +256,12 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    // Store file path for cleanup
     uploadedFilePath = fileObj.filepath || fileObj.path;
 
     const filename = fileObj.originalFilename || fileObj.name || 'unknown.pdf';
     const mimetype = fileObj.mimetype || fileObj.type || '';
 
-    console.log('File details:', {
-      filename,
-      mimetype,
-      size: fileObj.size,
-      filepath: fileObj.filepath,
-      path: fileObj.path
-    });
+    console.log('Processing file:', filename);
 
     if (!filename.toLowerCase().endsWith('.pdf') && mimetype !== 'application/pdf') {
       return res.status(400).json({ error: 'Please upload a PDF file' });
@@ -219,9 +270,16 @@ export default async function handler(req, res) {
     console.log('Extracting PDF text...');
     const text = await extractPDFText(fileObj);
 
+    console.log('Text extraction successful, length:', text.length);
+
     if (!text || text.trim().length === 0) {
-      return res.status(400).json({ error: 'No text found in PDF' });
+      return res.status(400).json({ 
+        error: 'No text found in PDF. This might be a scanned document or contain only images.' 
+      });
     }
+
+    // Show first part of extracted text for debugging
+    console.log('First 500 chars of extracted text:', text.substring(0, 500));
 
     const trimmedText = text.length > 50000
       ? text.substring(0, 50000) + "\n\n[Text truncated due to length]"
@@ -230,10 +288,15 @@ export default async function handler(req, res) {
     console.log('Processing comments with AI...');
     const result = await processComments(trimmedText, apiKey);
 
-    console.log('Sending successful response');
+    console.log('AI processing successful');
+    console.log('=== UPLOAD REQUEST SUCCESS ===');
+    
     res.status(200).json({ result });
   } catch (error) {
-    console.error('Server error:', error);
+    console.error('=== UPLOAD REQUEST ERROR ===');
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    
     res.status(500).json({
       error: error.message || 'Internal server error'
     });
