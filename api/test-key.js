@@ -18,7 +18,7 @@ const testApiKey = async (apiKey) => {
 
     // Test with a simple request
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 10,
       messages: [
         {
@@ -35,7 +35,7 @@ const testApiKey = async (apiKey) => {
   }
 };
 
-async function handler(req, res) {
+export default async function handler(req, res) {
   // Add CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -79,5 +79,3 @@ async function handler(req, res) {
     });
   }
 }
-
-export default handler;
