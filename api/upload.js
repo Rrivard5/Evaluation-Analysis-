@@ -110,6 +110,7 @@ ${text}`;
   try {
     const anthropic = new Anthropic({ apiKey });
 
+    // Use the same model as in test-key.js
     const response = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 2000,
@@ -138,6 +139,8 @@ const validateApiKey = (apiKey) => {
 };
 
 export default async function handler(req, res) {
+  console.log('Upload endpoint called with method:', req.method);
+  
   // Add CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -159,6 +162,8 @@ export default async function handler(req, res) {
     const { fields, fileObj } = await parseForm(req);
 
     console.log('Form parsed successfully');
+    console.log('Fields:', fields);
+    console.log('File:', fileObj ? { name: fileObj.originalFilename, size: fileObj.size } : 'No file');
 
     const apiKey = Array.isArray(fields.apiKey) ? fields.apiKey[0] : fields.apiKey;
 
@@ -193,6 +198,7 @@ export default async function handler(req, res) {
     console.log('Processing comments with AI...');
     const result = await processComments(trimmedText, apiKey);
 
+    console.log('Sending successful response');
     res.status(200).json({ result });
   } catch (error) {
     console.error('Server error:', error);
