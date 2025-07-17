@@ -1,15 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk';
-import formidable from 'formidable';
-import pdf from 'pdf-parse/lib/pdf-parse.js';
-import fs from 'fs/promises';
-import path from 'path';
-import os from 'os';
-
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+const Anthropic = require('@anthropic-ai/sdk');
+const formidable = require('formidable');
+const pdf = require('pdf-parse');
+const fs = require('fs').promises;
+const path = require('path');
+const os = require('os');
 
 const parseForm = (req) => {
   return new Promise((resolve, reject) => {
@@ -29,7 +23,6 @@ const parseForm = (req) => {
         return;
       }
 
-      // Ensure upload directory exists
       try {
         await fs.mkdir(uploadDir, { recursive: true });
       } catch (e) {
@@ -110,7 +103,6 @@ ${text}`;
   try {
     const anthropic = new Anthropic({ apiKey });
 
-    // Use the same model as in test-key.js
     const response = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 2000,
@@ -138,10 +130,9 @@ const validateApiKey = (apiKey) => {
   return apiKey && apiKey.startsWith('sk-ant-') && apiKey.length > 20;
 };
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   console.log('Upload endpoint called with method:', req.method);
   
-  // Add CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -162,8 +153,6 @@ export default async function handler(req, res) {
     const { fields, fileObj } = await parseForm(req);
 
     console.log('Form parsed successfully');
-    console.log('Fields:', fields);
-    console.log('File:', fileObj ? { name: fileObj.originalFilename, size: fileObj.size } : 'No file');
 
     const apiKey = Array.isArray(fields.apiKey) ? fields.apiKey[0] : fields.apiKey;
 
@@ -206,7 +195,6 @@ export default async function handler(req, res) {
       error: error.message || 'Internal server error'
     });
   } finally {
-    // Clean up uploaded file
     if (uploadedFilePath) {
       try {
         await fs.unlink(uploadedFilePath);
@@ -216,4 +204,4 @@ export default async function handler(req, res) {
       }
     }
   }
-}
+};
