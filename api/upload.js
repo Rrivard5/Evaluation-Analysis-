@@ -1,7 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const formidable = require('formidable');
 const pdf = require('pdf-parse');
-const fs = require('fs').promises;
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
@@ -13,9 +13,9 @@ export const config = {
 
 const parseForm = (req) => {
   return new Promise((resolve, reject) => {
-    const uploadDir = path.join(os.tmpdir(), 'uploads');
+    // Use /tmp directory for Vercel
+    const uploadDir = '/tmp';
     
-    // Create formidable instance properly
     const form = formidable.formidable({
       maxFileSize: 10 * 1024 * 1024, // 10MB
       keepExtensions: true,
@@ -23,17 +23,11 @@ const parseForm = (req) => {
       uploadDir: uploadDir,
     });
 
-    form.parse(req, async (err, fields, files) => {
+    form.parse(req, (err, fields, files) => {
       if (err) {
         console.error('Form parsing error:', err);
         reject(err);
         return;
-      }
-
-      try {
-        await fs.mkdir(uploadDir, { recursive: true });
-      } catch (e) {
-        // Directory might already exist
       }
 
       let fileObj = files.file;
@@ -41,6 +35,7 @@ const parseForm = (req) => {
         fileObj = fileObj[0];
       }
 
+      console.log('File object:', fileObj);
       resolve({ fields, files, fileObj });
     });
   });
@@ -48,16 +43,46 @@ const parseForm = (req) => {
 
 const extractPDFText = async (file) => {
   try {
+    console.log('Extracting PDF text from file:', file);
+    
     let dataBuffer;
 
-    if (file.filepath) {
-      console.log('Reading PDF file from path:', file.filepath);
-      dataBuffer = await fs.readFile(file.filepath);
+    // Try different ways to read the file
+    if (file.filepath && fs.existsSync(file.filepath)) {
+      console.log('Reading from filepath:', file.filepath);
+      dataBuffer = fs.readFileSync(file.filepath);
+    } else if (file.path && fs.existsSync(file.path)) {
+      console.log('Reading from path:', file.path);
+      dataBuffer = fs.readFileSync(file.path);
     } else if (file.buffer) {
-      console.log('Using PDF file buffer');
+      console.log('Using buffer directly');
       dataBuffer = file.buffer;
     } else {
-      throw new Error('No valid file path or buffer found');
+      // Try to read the file content directly from the request
+      console.log('Attempting to read file content directly');
+      const possiblePaths = [
+        file.filepath,
+        file.path,
+        path.join('/tmp', file.originalFilename || file.name || 'upload.pdf')
+      ];
+      
+      let found = false;
+      for (const filePath of possiblePaths) {
+        if (filePath && fs.existsSync(filePath)) {
+          console.log('Found file at:', filePath);
+          dataBuffer = fs.readFileSync(filePath);
+          found = true;
+          break;
+        }
+      }
+      
+      if (!found) {
+        throw new Error('Could not locate uploaded file. Available properties: ' + Object.keys(file).join(', '));
+      }
+    }
+
+    if (!dataBuffer || dataBuffer.length === 0) {
+      throw new Error('File buffer is empty');
     }
 
     console.log('PDF file read successfully, size:', dataBuffer.length);
@@ -160,6 +185,8 @@ export default async function handler(req, res) {
     const { fields, fileObj } = await parseForm(req);
 
     console.log('Form parsed successfully');
+    console.log('Fields:', fields);
+    console.log('File object keys:', Object.keys(fileObj));
 
     const apiKey = Array.isArray(fields.apiKey) ? fields.apiKey[0] : fields.apiKey;
 
@@ -171,10 +198,19 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    uploadedFilePath = fileObj.filepath;
+    // Store file path for cleanup
+    uploadedFilePath = fileObj.filepath || fileObj.path;
 
-    const filename = fileObj.originalFilename || fileObj.name || '';
-    const mimetype = fileObj.mimetype || '';
+    const filename = fileObj.originalFilename || fileObj.name || 'unknown.pdf';
+    const mimetype = fileObj.mimetype || fileObj.type || '';
+
+    console.log('File details:', {
+      filename,
+      mimetype,
+      size: fileObj.size,
+      filepath: fileObj.filepath,
+      path: fileObj.path
+    });
 
     if (!filename.toLowerCase().endsWith('.pdf') && mimetype !== 'application/pdf') {
       return res.status(400).json({ error: 'Please upload a PDF file' });
@@ -202,10 +238,13 @@ export default async function handler(req, res) {
       error: error.message || 'Internal server error'
     });
   } finally {
+    // Clean up uploaded file
     if (uploadedFilePath) {
       try {
-        await fs.unlink(uploadedFilePath);
-        console.log('Cleaned up temporary file');
+        if (fs.existsSync(uploadedFilePath)) {
+          fs.unlinkSync(uploadedFilePath);
+          console.log('Cleaned up temporary file:', uploadedFilePath);
+        }
       } catch (cleanupError) {
         console.error('File cleanup error:', cleanupError);
       }
