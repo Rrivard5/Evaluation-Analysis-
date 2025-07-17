@@ -1,10 +1,16 @@
 {
   "functions": {
     "api/upload.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     },
     "api/test-key.js": {
-      "maxDuration": 10
+      "maxDuration": 30
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }
