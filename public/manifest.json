@@ -1,0 +1,9 @@
+{
+  "short_name": "Course Eval AI",
+  "name": "Course Evaluation Summarizer",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#d4661b",
+  "background_color": "#ffffff",
+  "description": "AI-powered course evaluation analysis tool"
+}
