@@ -108,7 +108,144 @@ function App() {
         compressedBytes = await pdfDoc.save(aggressiveOptions);
         console.log('Aggressive compression result:', Math.round(compressedBytes.length / 1024 / 1024), 'MB');
       }
+  // Add these functions to your App.js file, right after the existing compressPDF function
+
+// Add this new function for client-side text extraction
+const extractTextClientSide = async (file) => {
+  try {
+    console.log('Extracting text client-side...');
+    
+    // Dynamically import pdf.js
+    const pdfjsLib = await import('pdfjs-dist/webpack');
+    
+    // Configure worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    
+    console.log('PDF loaded, pages:', pdf.numPages);
+    
+    let fullText = '';
+    
+    // Extract text from each page
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map(item => item.str).join(' ');
+      fullText += pageText + '\n\n';
       
+      // Update progress
+      setProgress((i / pdf.numPages) * 50); // First 50% for extraction
+    }
+    
+    console.log('Text extracted, length:', fullText.length);
+    
+    // If text is too long, truncate it
+    const maxTextLength = 50000;
+    if (fullText.length > maxTextLength) {
+      fullText = fullText.substring(0, maxTextLength) + '\n\n[Text truncated due to length]';
+      console.log('Text truncated to:', maxTextLength);
+    }
+    
+    return fullText;
+    
+  } catch (error) {
+    console.error('Client-side text extraction failed:', error);
+    throw new Error('Failed to extract text from PDF: ' + error.message);
+  }
+};
+
+// REPLACE your existing handleUpload function with this new version
+const handleUpload = async () => {
+  if (!file) {
+    setError("Please select a PDF file first.");
+    return;
+  }
+
+  setLoading(true);
+  setError("");
+  setResponse("");
+  
+  const progressInterval = simulateProgress();
+  
+  try {
+    // Extract text client-side instead of uploading the PDF
+    const extractedText = await extractTextClientSide(file);
+    
+    if (!extractedText || extractedText.trim().length === 0) {
+      throw new Error('No text found in PDF. This might be a scanned document or contain only images.');
+    }
+    
+    // Update progress
+    setProgress(60);
+    
+    // Send only the text to the server
+    const res = await axios.post('/api/process-text', {
+      text: extractedText,
+      apiKey: apiKey,
+      filename: file.name
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: 60000,
+    });
+    
+    clearInterval(progressInterval);
+    setProgress(100);
+    setResponse(res.data.result);
+    setStep('results');
+    
+  } catch (err) {
+    clearInterval(progressInterval);
+    setProgress(0);
+    
+    if (err.response?.data?.error) {
+      setError(err.response.data.error);
+    } else {
+      setError(`Processing failed: ${err.message || "Please try again."}`);
+    }
+    setStep('upload'); // Go back to upload step on error
+  } finally {
+    setLoading(false);
+  }
+};
+
+// ALSO UPDATE the handleFileChange function to remove compression
+const handleFileChange = async (e) => {
+  const selectedFile = e.target.files[0];
+  if (!selectedFile || selectedFile.type !== 'application/pdf') {
+    setError("Please select a valid PDF file.");
+    setFile(null);
+    return;
+  }
+
+  setError("");
+  setFile(selectedFile);
+  setStep('confirm');
+  
+  // Show file size info
+  const fileSizeMB = (selectedFile.size / 1024 / 1024).toFixed(2);
+  console.log(`Selected file: ${selectedFile.name}, Size: ${fileSizeMB}MB`);
+};
+
+// UPDATE the handleDrop function similarly
+const handleDrop = async (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  const droppedFile = e.dataTransfer.files[0];
+  if (!droppedFile || droppedFile.type !== 'application/pdf') {
+    setError("Please drop a valid PDF file.");
+    setFile(null);
+    return;
+  }
+
+  // Use the same logic as handleFileChange
+  const event = { target: { files: [droppedFile] } };
+  await handleFileChange(event);
+};    
       // Create new file object
       const compressedFile = new File([compressedBytes], file.name, {
         type: 'application/pdf',
