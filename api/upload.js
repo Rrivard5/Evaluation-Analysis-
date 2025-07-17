@@ -5,11 +5,18 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
 const parseForm = (req) => {
   return new Promise((resolve, reject) => {
     const uploadDir = path.join(os.tmpdir(), 'uploads');
     
-    const form = formidable({
+    // Create formidable instance properly
+    const form = formidable.formidable({
       maxFileSize: 10 * 1024 * 1024, // 10MB
       keepExtensions: true,
       multiples: false,
@@ -130,7 +137,7 @@ const validateApiKey = (apiKey) => {
   return apiKey && apiKey.startsWith('sk-ant-') && apiKey.length > 20;
 };
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   console.log('Upload endpoint called with method:', req.method);
   
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -204,4 +211,4 @@ module.exports = async function handler(req, res) {
       }
     }
   }
-};
+}
