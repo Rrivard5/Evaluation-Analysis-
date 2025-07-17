@@ -46,166 +46,206 @@ const parseForm = (req) => {
 
 const extractPDFText = async (file) => {
   try {
-    console.log('=== PDF EXTRACTION START ===');
-    console.log('File object keys:', Object.keys(file));
-    console.log('File details:', {
-      originalFilename: file.originalFilename,
-      filepath: file.filepath,
-      path: file.path,
-      size: file.size,
-      mimetype: file.mimetype,
-      type: file.type
-    });
-    
-    // List all files in /tmp directory
-    const tmpFiles = fs.readdirSync('/tmp');
-    console.log('All files in /tmp:', tmpFiles);
+    console.log('=== ROBUST PDF EXTRACTION START ===');
+    console.log('File:', file.originalFilename, 'Size:', file.size);
     
     let dataBuffer;
-    let filePath;
-
-    // Try to get the file buffer
-    if (file.buffer) {
-      console.log('Using existing buffer, size:', file.buffer.length);
-      dataBuffer = file.buffer;
+    if (file.filepath && fs.existsSync(file.filepath)) {
+      console.log('Reading from filepath:', file.filepath);
+      dataBuffer = fs.readFileSync(file.filepath);
     } else {
-      // Try to find the file
-      const possiblePaths = [
-        file.filepath,
-        file.path,
-        `/tmp/${file.originalFilename}`,
-        ...tmpFiles.map(f => `/tmp/${f}`)
-      ].filter(p => p); // Remove null/undefined values
-
-      console.log('Trying paths:', possiblePaths);
-
-      for (const tryPath of possiblePaths) {
-        if (fs.existsSync(tryPath)) {
-          console.log('Found file at:', tryPath);
-          filePath = tryPath;
-          const stats = fs.statSync(tryPath);
-          console.log('File stats:', { size: stats.size, isFile: stats.isFile() });
-          
-          dataBuffer = fs.readFileSync(tryPath);
-          console.log('Buffer loaded, size:', dataBuffer.length);
-          break;
-        }
-      }
+      throw new Error('Could not locate uploaded file');
     }
-
-    if (!dataBuffer) {
-      throw new Error('Could not locate or read uploaded file');
-    }
-
-    if (dataBuffer.length === 0) {
-      throw new Error('File buffer is empty');
-    }
-
-    // Check if it's actually a PDF
-    const pdfHeader = dataBuffer.slice(0, 4).toString();
-    console.log('File header:', pdfHeader);
     
-    if (pdfHeader !== '%PDF') {
-      throw new Error('File does not appear to be a valid PDF (missing PDF header)');
-    }
-
-    console.log('Valid PDF detected, attempting text extraction...');
-
-    // Try different PDF parsing approaches
-    const parseAttempts = [
-      // Attempt 1: Basic parsing
-      () => pdf(dataBuffer),
+    console.log('Buffer loaded, size:', dataBuffer.length);
+    
+    // Method 1: Try standard pdf-parse
+    console.log('=== METHOD 1: Standard PDF Parse ===');
+    try {
+      const pdfData = await pdf(dataBuffer);
+      console.log('PDF Info:', {
+        pages: pdfData.numpages,
+        textLength: pdfData.text?.length || 0,
+        hasInfo: !!pdfData.info,
+        version: pdfData.version
+      });
       
-      // Attempt 2: With options
-      () => pdf(dataBuffer, {
+      if (pdfData.text && pdfData.text.trim().length > 100) {
+        console.log('SUCCESS: Method 1 worked');
+        console.log('First 200 chars:', pdfData.text.substring(0, 200));
+        return pdfData.text;
+      }
+    } catch (error) {
+      console.log('Method 1 failed:', error.message);
+    }
+    
+    // Method 2: Try with different options
+    console.log('=== METHOD 2: PDF Parse with Options ===');
+    try {
+      const pdfData = await pdf(dataBuffer, {
         normalizeWhitespace: true,
-        disableCombineTextItems: false
-      }),
+        disableCombineTextItems: false,
+        max: 0 // Extract all pages
+      });
       
-      // Attempt 3: Force version
-      () => pdf(dataBuffer, {
-        version: 'v1.10.100',
-        normalizeWhitespace: true
-      }),
-      
-      // Attempt 4: Max pages
-      () => pdf(dataBuffer, {
-        max: 10,
-        normalizeWhitespace: true
-      })
-    ];
-
-    let pdfData;
-    let lastError;
-
-    for (let i = 0; i < parseAttempts.length; i++) {
-      try {
-        console.log(`Parse attempt ${i + 1}...`);
-        pdfData = await parseAttempts[i]();
-        console.log(`Parse attempt ${i + 1} successful`);
-        break;
-      } catch (error) {
-        console.log(`Parse attempt ${i + 1} failed:`, error.message);
-        lastError = error;
+      if (pdfData.text && pdfData.text.trim().length > 100) {
+        console.log('SUCCESS: Method 2 worked');
+        return pdfData.text;
       }
+    } catch (error) {
+      console.log('Method 2 failed:', error.message);
     }
-
-    if (!pdfData) {
-      throw new Error(`All PDF parsing attempts failed. Last error: ${lastError.message}`);
-    }
-
-    console.log('PDF parse results:', {
-      hasText: !!pdfData.text,
-      textLength: pdfData.text ? pdfData.text.length : 0,
-      numPages: pdfData.numpages,
-      info: pdfData.info
-    });
-
-    if (pdfData.text && pdfData.text.length > 0) {
-      console.log('First 300 characters:', pdfData.text.substring(0, 300));
-      console.log('=== PDF EXTRACTION SUCCESS ===');
-      return pdfData.text;
-    }
-
-    // If main text extraction failed, try page-by-page
-    console.log('Main text extraction failed, trying page-by-page...');
     
-    if (!pdfData.numpages || pdfData.numpages === 0) {
-      throw new Error('PDF contains no pages');
-    }
-
-    let allText = '';
-    for (let pageNum = 1; pageNum <= Math.min(pdfData.numpages, 20); pageNum++) {
-      try {
-        console.log(`Extracting page ${pageNum}...`);
-        const pageData = await pdf(dataBuffer, {
-          first: pageNum,
-          last: pageNum,
-          normalizeWhitespace: true
-        });
-        
-        if (pageData.text) {
-          allText += `\n--- Page ${pageNum} ---\n${pageData.text}`;
-          console.log(`Page ${pageNum} text length:`, pageData.text.length);
+    // Method 3: Extract text from raw PDF content
+    console.log('=== METHOD 3: Raw PDF Content Extraction ===');
+    try {
+      const pdfString = dataBuffer.toString('latin1');
+      console.log('PDF string length:', pdfString.length);
+      
+      // Look for text between parentheses (common PDF text encoding)
+      const textPattern1 = /\(([^)]+)\)/g;
+      const matches1 = [...pdfString.matchAll(textPattern1)];
+      console.log('Found parentheses matches:', matches1.length);
+      
+      let extractedText = '';
+      for (const match of matches1) {
+        const text = match[1];
+        if (text && text.length > 2 && /[a-zA-Z]/.test(text)) {
+          extractedText += text + ' ';
         }
-      } catch (pageError) {
-        console.log(`Page ${pageNum} extraction failed:`, pageError.message);
       }
+      
+      if (extractedText.length > 100) {
+        console.log('SUCCESS: Method 3 worked with parentheses');
+        console.log('Extracted text length:', extractedText.length);
+        return extractedText;
+      }
+      
+      // Try another pattern - text in brackets
+      const textPattern2 = /\[([^\]]+)\]/g;
+      const matches2 = [...pdfString.matchAll(textPattern2)];
+      console.log('Found bracket matches:', matches2.length);
+      
+      extractedText = '';
+      for (const match of matches2) {
+        const text = match[1];
+        if (text && text.length > 2 && /[a-zA-Z]/.test(text)) {
+          extractedText += text + ' ';
+        }
+      }
+      
+      if (extractedText.length > 100) {
+        console.log('SUCCESS: Method 3 worked with brackets');
+        return extractedText;
+      }
+      
+      // Try to find text in streams
+      const streamPattern = /stream\s*(.*?)\s*endstream/gs;
+      const streamMatches = [...pdfString.matchAll(streamPattern)];
+      console.log('Found stream matches:', streamMatches.length);
+      
+      extractedText = '';
+      for (const streamMatch of streamMatches) {
+        const streamContent = streamMatch[1];
+        // Look for readable text in the stream
+        const readableMatches = streamContent.match(/[A-Za-z][A-Za-z0-9\s.,!?;:'"()-]{5,}/g);
+        if (readableMatches) {
+          extractedText += readableMatches.join(' ') + ' ';
+        }
+      }
+      
+      if (extractedText.length > 100) {
+        console.log('SUCCESS: Method 3 worked with streams');
+        return extractedText;
+      }
+      
+    } catch (error) {
+      console.log('Method 3 failed:', error.message);
     }
-
-    if (allText.trim().length > 0) {
-      console.log('Page-by-page extraction successful, total length:', allText.length);
-      console.log('=== PDF EXTRACTION SUCCESS ===');
-      return allText;
+    
+    // Method 4: Try to extract text objects
+    console.log('=== METHOD 4: PDF Text Objects ===');
+    try {
+      const pdfString = dataBuffer.toString('latin1');
+      
+      // Look for BT (Begin Text) and ET (End Text) markers
+      const textObjectPattern = /BT\s*(.*?)\s*ET/gs;
+      const textObjects = [...pdfString.matchAll(textObjectPattern)];
+      console.log('Found text objects:', textObjects.length);
+      
+      let extractedText = '';
+      for (const textObj of textObjects) {
+        const content = textObj[1];
+        // Look for Tj or TJ operators (show text)
+        const textMatches = content.match(/\(([^)]+)\)\s*Tj/g);
+        if (textMatches) {
+          for (const match of textMatches) {
+            const text = match.match(/\(([^)]+)\)/)[1];
+            if (text && /[a-zA-Z]/.test(text)) {
+              extractedText += text + ' ';
+            }
+          }
+        }
+      }
+      
+      if (extractedText.length > 100) {
+        console.log('SUCCESS: Method 4 worked');
+        return extractedText;
+      }
+      
+    } catch (error) {
+      console.log('Method 4 failed:', error.message);
     }
-
-    console.log('=== PDF EXTRACTION FAILED ===');
-    throw new Error('PDF appears to contain no extractable text. This might be a scanned document, password-protected, or corrupted.');
-
+    
+    // Method 5: Try individual pages with different options
+    console.log('=== METHOD 5: Individual Page Extraction ===');
+    try {
+      const pdfData = await pdf(dataBuffer);
+      let allText = '';
+      
+      for (let page = 1; page <= pdfData.numpages; page++) {
+        try {
+          const pageData = await pdf(dataBuffer, {
+            first: page,
+            last: page,
+            normalizeWhitespace: true,
+            disableCombineTextItems: false
+          });
+          
+          if (pageData.text && pageData.text.trim().length > 0) {
+            allText += pageData.text + '\n';
+            console.log(`Page ${page} text length:`, pageData.text.length);
+          }
+        } catch (pageError) {
+          console.log(`Page ${page} failed:`, pageError.message);
+        }
+      }
+      
+      if (allText.length > 100) {
+        console.log('SUCCESS: Method 5 worked');
+        return allText;
+      }
+      
+    } catch (error) {
+      console.log('Method 5 failed:', error.message);
+    }
+    
+    console.log('=== ALL METHODS FAILED ===');
+    
+    // If we get here, let's provide detailed diagnostics
+    console.log('PDF Diagnostics:');
+    console.log('- File size:', dataBuffer.length);
+    console.log('- PDF version:', dataBuffer.slice(0, 8).toString());
+    console.log('- Contains "stream":', pdfString.includes('stream'));
+    console.log('- Contains "BT":', pdfString.includes('BT'));
+    console.log('- Contains "Tj":', pdfString.includes('Tj'));
+    console.log('- Contains parentheses:', (pdfString.match(/\(/g) || []).length);
+    
+    throw new Error('Could not extract readable text from PDF using any method. The PDF may be image-based, encrypted, or use an unsupported text encoding.');
+    
   } catch (error) {
     console.error('=== PDF EXTRACTION ERROR ===');
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
+    console.error('Error:', error.message);
     throw error;
   }
 };
