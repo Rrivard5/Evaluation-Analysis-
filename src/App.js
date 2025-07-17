@@ -2,15 +2,20 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import './App.css';
 
+// Import our enhanced PDF utilities
+import { PDFUtils } from './utils/pdfUtils';
+
 function App() {
   const [apiKey, setApiKey] = useState('');
   const [apiKeyValid, setApiKeyValid] = useState(false);
   const [file, setFile] = useState(null);
+  const [originalFile, setOriginalFile] = useState(null); // Store original file reference
   const [response, setResponse] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [step, setStep] = useState('api-key');
+  const [compressionInfo, setCompressionInfo] = useState(null); // Track compression results
 
   const validateApiKey = (key) => {
     return key && key.startsWith('sk-ant-') && key.length > 20;
@@ -54,68 +59,65 @@ function App() {
     }
   };
 
-  // New function for client-side text extraction
-  const extractTextClientSide = async (file) => {
-    try {
-      console.log('Extracting text client-side...');
-      
-      // Dynamically import pdf.js
-      const pdfjsLib = await import('pdfjs-dist/webpack');
-      
-      // Configure worker
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-      
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      
-      console.log('PDF loaded, pages:', pdf.numPages);
-      
-      let fullText = '';
-      
-      // Extract text from each page
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items.map(item => item.str).join(' ');
-        fullText += pageText + '\n\n';
-        
-        // Update progress
-        setProgress((i / pdf.numPages) * 50); // First 50% for extraction
-      }
-      
-      console.log('Text extracted, length:', fullText.length);
-      
-      // If text is too long, truncate it
-      const maxTextLength = 50000;
-      if (fullText.length > maxTextLength) {
-        fullText = fullText.substring(0, maxTextLength) + '\n\n[Text truncated due to length]';
-        console.log('Text truncated to:', maxTextLength);
-      }
-      
-      return fullText;
-      
-    } catch (error) {
-      console.error('Client-side text extraction failed:', error);
-      throw new Error('Failed to extract text from PDF: ' + error.message);
-    }
-  };
-
-  // Simplified file change handler without compression
+  // Enhanced file change handler with compression (Option 2)
   const handleFileChange = async (e) => {
     const selectedFile = e.target.files[0];
     if (!selectedFile || selectedFile.type !== 'application/pdf') {
       setError("Please select a valid PDF file.");
       setFile(null);
+      setOriginalFile(null);
       return;
     }
 
     setError("");
-    setFile(selectedFile);
-    setStep('confirm');
+    setLoading(true);
+    setProgress(0);
+    setCompressionInfo(null);
     
-    // Show file size info
-    const fileSizeMB = (selectedFile.size / 1024 / 1024).toFixed(2);
-    console.log(`Selected file: ${selectedFile.name}, Size: ${fileSizeMB}MB`);
+    try {
+      const fileSizeMB = selectedFile.size / 1024 / 1024;
+      console.log(`Selected file: ${selectedFile.name}, Size: ${fileSizeMB.toFixed(2)}MB`);
+      
+      // Store original file reference
+      setOriginalFile(selectedFile);
+      
+      // If file is large (>5MB), compress it first
+      if (selectedFile.size > 5 * 1024 * 1024) {
+        console.log('File is large, compressing...');
+        
+        const compressedFile = await PDFUtils.compressPDF(selectedFile, 0.7, (progress) => {
+          setProgress(progress);
+        });
+        
+        const originalSizeMB = selectedFile.size / 1024 / 1024;
+        const compressedSizeMB = compressedFile.size / 1024 / 1024;
+        const compressionRatio = (compressedSizeMB / originalSizeMB) * 100;
+        
+        setCompressionInfo({
+          originalSize: originalSizeMB,
+          compressedSize: compressedSizeMB,
+          compressionRatio: compressionRatio
+        });
+        
+        setFile(compressedFile);
+        console.log(`Compressed: ${originalSizeMB.toFixed(2)}MB → ${compressedSizeMB.toFixed(2)}MB (${compressionRatio.toFixed(1)}%)`);
+      } else {
+        // File is small enough, use as-is
+        setFile(selectedFile);
+        console.log('File size is acceptable, no compression needed');
+      }
+      
+      setStep('confirm');
+      
+    } catch (error) {
+      console.error('File processing error:', error);
+      setError(`File processing failed: ${error.message}`);
+      setFile(null);
+      setOriginalFile(null);
+    } finally {
+      setLoading(false);
+      setProgress(0);
+    }
   };
 
   const handleDragOver = (e) => {
@@ -123,7 +125,7 @@ function App() {
     e.stopPropagation();
   };
 
-  // Simplified drop handler without compression
+  // Enhanced drop handler with compression (Option 2)
   const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -132,12 +134,35 @@ function App() {
     if (!droppedFile || droppedFile.type !== 'application/pdf') {
       setError("Please drop a valid PDF file.");
       setFile(null);
+      setOriginalFile(null);
       return;
     }
 
     // Use the same logic as handleFileChange
     const event = { target: { files: [droppedFile] } };
     await handleFileChange(event);
+  };
+
+  // Enhanced text extraction using our utilities
+  const extractTextClientSide = async (file) => {
+    try {
+      console.log('Extracting text with enhanced processing...');
+      
+      const text = await PDFUtils.extractTextAdvanced(file, (progress) => {
+        setProgress(progress * 0.7); // Use 70% of progress bar for extraction
+      });
+      
+      if (!text || text.trim().length === 0) {
+        throw new Error('No text found in PDF. This might be a scanned document or contain only images.');
+      }
+      
+      console.log('Enhanced extraction completed. Text length:', text.length);
+      return text;
+      
+    } catch (error) {
+      console.error('Enhanced extraction failed:', error);
+      throw error;
+    }
   };
 
   const handleConfirmUpload = () => {
@@ -147,6 +172,8 @@ function App() {
 
   const handleCancelUpload = () => {
     setFile(null);
+    setOriginalFile(null);
+    setCompressionInfo(null);
     setStep('upload');
     const fileInput = document.getElementById('file-input');
     if (fileInput) fileInput.value = '';
@@ -166,7 +193,7 @@ function App() {
     return interval;
   };
 
-  // Updated upload handler that uses client-side text extraction
+  // Updated upload handler that uses enhanced extraction
   const handleUpload = async () => {
     if (!file) {
       setError("Please select a PDF file first.");
@@ -180,7 +207,7 @@ function App() {
     const progressInterval = simulateProgress();
     
     try {
-      // Extract text client-side instead of uploading the PDF
+      // Extract text using enhanced method
       const extractedText = await extractTextClientSide(file);
       
       if (!extractedText || extractedText.trim().length === 0) {
@@ -188,13 +215,13 @@ function App() {
       }
       
       // Update progress
-      setProgress(60);
+      setProgress(75);
       
       // Send only the text to the server
       const res = await axios.post('/api/process-text', {
         text: extractedText,
         apiKey: apiKey,
-        filename: file.name
+        filename: originalFile ? originalFile.name : file.name
       }, {
         headers: {
           'Content-Type': 'application/json',
@@ -238,6 +265,8 @@ function App() {
 
   const handleReset = () => {
     setFile(null);
+    setOriginalFile(null);
+    setCompressionInfo(null);
     setResponse("");
     setError("");
     setProgress(0);
@@ -251,6 +280,8 @@ function App() {
     setApiKey('');
     setApiKeyValid(false);
     setFile(null);
+    setOriginalFile(null);
+    setCompressionInfo(null);
     setResponse('');
     setError('');
     setProgress(0);
@@ -411,8 +442,26 @@ function App() {
                 <p className="upload-description">
                   Select or drag and drop a PDF file containing course evaluations
                   <br />
-                  <small style={{ color: '#718096' }}>Text will be extracted directly in your browser</small>
+                  <small style={{ color: '#718096' }}>
+                    Large files will be automatically compressed for optimal processing
+                  </small>
                 </p>
+                
+                {loading && (
+                  <div className="progress-container">
+                    <div className="progress-bar">
+                      <div 
+                        className="progress-fill" 
+                        style={{ width: `${progress}%` }}
+                      ></div>
+                    </div>
+                    <p className="progress-text">
+                      {progress < 30 ? "Analyzing PDF..." : 
+                       progress < 70 ? "Compressing file..." : 
+                       "Finalizing..."}
+                    </p>
+                  </div>
+                )}
                 
                 <div className="file-input-container">
                   <input
@@ -457,7 +506,7 @@ function App() {
     );
   }
 
-  // Confirmation Step
+  // Confirmation Step - Enhanced with compression info
   if (step === 'confirm') {
     return (
       <div className="app">
@@ -503,15 +552,26 @@ function App() {
                     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
                     <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
                   </svg>
-                  <strong>{file?.name}</strong>
+                  <strong>{originalFile ? originalFile.name : file?.name}</strong>
                 </div>
 
                 <div style={{ marginBottom: '1rem', color: '#718096' }}>
-                  <p>File size: {file ? (file.size / 1024 / 1024).toFixed(2) : 0} MB</p>
+                  {compressionInfo ? (
+                    <div>
+                      <p><strong>Original size:</strong> {compressionInfo.originalSize.toFixed(2)} MB</p>
+                      <p><strong>Compressed size:</strong> {compressionInfo.compressedSize.toFixed(2)} MB</p>
+                      <p><strong>Compression ratio:</strong> {compressionInfo.compressionRatio.toFixed(1)}% of original</p>
+                      <p style={{ color: '#48bb78', fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                        ✓ File compressed successfully for optimal processing
+                      </p>
+                    </div>
+                  ) : (
+                    <p>File size: {file ? (file.size / 1024 / 1024).toFixed(2) : 0} MB</p>
+                  )}
                 </div>
 
                 <div style={{ marginBottom: '2rem', color: '#718096' }}>
-                  <p>Text will be extracted in your browser and analyzed using AI to provide constructive feedback.</p>
+                  <p>Text will be extracted and analyzed using AI to provide constructive feedback.</p>
                 </div>
 
                 <div className="button-group">
