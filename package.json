@@ -13,8 +13,7 @@
     "axios": "^1.6.0",
     "@anthropic-ai/sdk": "^0.30.0",
     "formidable": "^3.5.1",
-    "pdf-parse": "^1.1.1",
-    "pdf-lib": "^1.17.1"
+    "pdf-parse": "^1.1.1"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -39,6 +38,5 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  },
-  "proxy": "http://localhost:3000"
+  }
 }
