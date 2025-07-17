@@ -16,7 +16,7 @@ const testApiKey = async (apiKey) => {
       apiKey: apiKey,
     });
 
-    // Test with a simple request
+    // Test with a simple request using the correct model
     const response = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 10,
@@ -36,6 +36,8 @@ const testApiKey = async (apiKey) => {
 };
 
 export default async function handler(req, res) {
+  console.log('Test key endpoint called with method:', req.method);
+  
   // Add CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -51,17 +53,21 @@ export default async function handler(req, res) {
   }
 
   try {
+    console.log('Request body:', req.body);
     const { apiKey } = req.body;
 
     if (!apiKey || !validateApiKey(apiKey)) {
+      console.log('Invalid API key format');
       return res.status(400).json({ 
         error: 'Please provide a valid Anthropic API key (starts with sk-ant-)',
         valid: false 
       });
     }
 
+    console.log('Testing API key...');
     // Test the API key
     const isValid = await testApiKey(apiKey);
+    console.log('API key test result:', isValid);
 
     if (isValid) {
       res.status(200).json({ valid: true });
