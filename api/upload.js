@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import formidable from 'formidable';
-import pdf from 'pdf-parse';
-import fs from 'fs';
+import pdf from 'pdf-parse/lib/pdf-parse.js';
+import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 
@@ -14,48 +14,34 @@ export const config = {
 const parseForm = (req) => {
   return new Promise((resolve, reject) => {
     const uploadDir = path.join(os.tmpdir(), 'uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-
+    
     const form = formidable({
       maxFileSize: 10 * 1024 * 1024, // 10MB
       keepExtensions: true,
       multiples: false,
       uploadDir: uploadDir,
-      filename: (name, ext, part) => {
-        return `${Date.now()}-${Math.random().toString(36).substring(2)}${ext}`;
-      }
     });
 
-    form.parse(req, (err, fields, files) => {
+    form.parse(req, async (err, fields, files) => {
       if (err) {
         console.error('Form parsing error:', err);
         reject(err);
-      } else {
-        let fileObj = files.file;
-        if (Array.isArray(fileObj)) {
-          fileObj = fileObj[0];
-        }
-
-        console.log('Raw form parse result:', {
-          fields: Object.keys(fields),
-          files: Object.keys(files),
-          fileIsArray: Array.isArray(files.file),
-          fileDetails: fileObj ? {
-            name: fileObj.name,
-            originalFilename: fileObj.originalFilename,
-            newFilename: fileObj.newFilename,
-            mimetype: fileObj.mimetype,
-            size: fileObj.size,
-            filepath: fileObj.filepath,
-            properties: Object.getOwnPropertyNames(fileObj)
-          } : 'No file'
-        });
-
-        files.file = fileObj;
-        resolve({ fields, files });
+        return;
       }
+
+      // Ensure upload directory exists
+      try {
+        await fs.mkdir(uploadDir, { recursive: true });
+      } catch (e) {
+        // Directory might already exist
+      }
+
+      let fileObj = files.file;
+      if (Array.isArray(fileObj)) {
+        fileObj = fileObj[0];
+      }
+
+      resolve({ fields, files, fileObj });
     });
   });
 };
@@ -64,11 +50,11 @@ const extractPDFText = async (file) => {
   try {
     let dataBuffer;
 
-    if (file.filepath && fs.existsSync(file.filepath)) {
+    if (file.filepath) {
       console.log('Reading PDF file from path:', file.filepath);
-      dataBuffer = fs.readFileSync(file.filepath);
+      dataBuffer = await fs.readFile(file.filepath);
     } else if (file.buffer) {
-      console.log('Using PDF file buffer, size:', file.buffer.length);
+      console.log('Using PDF file buffer');
       dataBuffer = file.buffer;
     } else {
       throw new Error('No valid file path or buffer found');
@@ -125,25 +111,17 @@ ${text}`;
     const anthropic = new Anthropic({ apiKey });
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 2000,
       temperature: 0.3,
       messages: [{ role: 'user', content: prompt }]
     });
 
-    if (response.stop_reason === 'refusal') {
-      throw new Error('Content declined by AI for safety reasons');
-    }
-
     return response.content[0].text;
   } catch (error) {
     console.error('Anthropic API error:', error);
 
-    if (error.message.includes('refusal') || error.message.includes('Content declined')) {
-      throw new Error('The AI declined to process this content for safety reasons. Please try with different content.');
-    }
-
-    if (error.status === 401 || error.message.includes('authentication')) {
+    if (error.status === 401) {
       throw new Error('Invalid API key. Please check your Anthropic API key.');
     }
 
@@ -151,11 +129,7 @@ ${text}`;
       throw new Error('Rate limit exceeded. Please try again in a moment.');
     }
 
-    if (error.status === 400) {
-      throw new Error('Invalid request. Please check your input and try again.');
-    }
-
-    throw new Error('Failed to process comments with AI');
+    throw new Error('Failed to process comments with AI: ' + error.message);
   }
 };
 
@@ -163,7 +137,8 @@ const validateApiKey = (apiKey) => {
   return apiKey && apiKey.startsWith('sk-ant-') && apiKey.length > 20;
 };
 
-async function handler(req, res) {
+export default async function handler(req, res) {
+  // Add CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -177,18 +152,13 @@ async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  let uploadedFile = null;
+  let uploadedFilePath = null;
 
   try {
     console.log('Request received, parsing form...');
-    const { fields, files } = await parseForm(req);
-
-    const actualFile = files.file;
-    uploadedFile = actualFile;
+    const { fields, fileObj } = await parseForm(req);
 
     console.log('Form parsed successfully');
-    console.log('Fields:', Object.keys(fields));
-    console.log('Files:', Object.keys(files));
 
     const apiKey = Array.isArray(fields.apiKey) ? fields.apiKey[0] : fields.apiKey;
 
@@ -196,46 +166,21 @@ async function handler(req, res) {
       return res.status(400).json({ error: 'Valid Anthropic API key required' });
     }
 
-    if (!actualFile) {
+    if (!fileObj) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const filename = actualFile.originalFilename || actualFile.newFilename || actualFile.name || actualFile.filename || '';
-    const mimetype = actualFile.mimetype || actualFile.type || '';
+    uploadedFilePath = fileObj.filepath;
 
-    console.log('File object details:', {
-      exists: !!actualFile,
-      originalFilename: actualFile?.originalFilename,
-      newFilename: actualFile?.newFilename,
-      name: actualFile?.name,
-      filename: actualFile?.filename,
-      mimetype: actualFile?.mimetype,
-      size: actualFile?.size,
-      filepath: actualFile?.filepath,
-      allProperties: Object.getOwnPropertyNames(actualFile)
-    });
+    const filename = fileObj.originalFilename || fileObj.name || '';
+    const mimetype = fileObj.mimetype || '';
 
-    const isValidPdf = filename.toLowerCase().endsWith('.pdf') || mimetype === 'application/pdf';
-
-    if (!isValidPdf && filename !== '' && mimetype !== '') {
-      return res.status(400).json({
-        error: 'Please upload a PDF file',
-        debug: {
-          filename,
-          mimetype,
-          receivedFile: !!actualFile,
-          allProps: Object.getOwnPropertyNames(actualFile)
-        }
-      });
+    if (!filename.toLowerCase().endsWith('.pdf') && mimetype !== 'application/pdf') {
+      return res.status(400).json({ error: 'Please upload a PDF file' });
     }
 
-    if (!filename && !mimetype) {
-      console.log('Warning: No filename or mimetype detected, but file exists. Proceeding...');
-    }
-
-    console.log('Attempting to extract PDF text...');
-    const text = await extractPDFText(actualFile);
-    console.log('PDF text extracted, length:', text.length);
+    console.log('Extracting PDF text...');
+    const text = await extractPDFText(fileObj);
 
     if (!text || text.trim().length === 0) {
       return res.status(400).json({ error: 'No text found in PDF' });
@@ -247,25 +192,22 @@ async function handler(req, res) {
 
     console.log('Processing comments with AI...');
     const result = await processComments(trimmedText, apiKey);
-    console.log('AI processing complete');
 
     res.status(200).json({ result });
   } catch (error) {
     console.error('Server error:', error);
     res.status(500).json({
-      error: error.message || 'Internal server error',
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      error: error.message || 'Internal server error'
     });
   } finally {
-    try {
-      if (uploadedFile?.filepath && fs.existsSync(uploadedFile.filepath)) {
-        fs.unlinkSync(uploadedFile.filepath);
-        console.log('Cleaned up temporary file:', uploadedFile.filepath);
+    // Clean up uploaded file
+    if (uploadedFilePath) {
+      try {
+        await fs.unlink(uploadedFilePath);
+        console.log('Cleaned up temporary file');
+      } catch (cleanupError) {
+        console.error('File cleanup error:', cleanupError);
       }
-    } catch (cleanupError) {
-      console.error('File cleanup error:', cleanupError);
     }
   }
 }
-
-export default handler;
