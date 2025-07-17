@@ -5,6 +5,9 @@
     },
     "api/test-key.js": {
       "maxDuration": 30
+    },
+    "api/process-text.js": {
+      "maxDuration": 30
     }
   }
 }
