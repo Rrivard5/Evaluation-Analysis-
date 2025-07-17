@@ -100,51 +100,80 @@ function App() {
     return interval;
   };
 
-  const handleUpload = async () => {
-    if (!file) {
-      setError("Please select a PDF file first.");
-      return;
-    }
+  // Add this enhanced error handling to your handleUpload function in App.js
 
-    setLoading(true);
-    setError("");
-    setResponse("");
+const handleUpload = async () => {
+  if (!file) {
+    setError("Please select a PDF file first.");
+    return;
+  }
+
+  console.log("Starting upload process...");
+  setLoading(true);
+  setError("");
+  setResponse("");
+  
+  const progressInterval = simulateProgress();
+  
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('apiKey', apiKey);
     
-    const progressInterval = simulateProgress();
+    console.log("Sending request to /api/upload");
+    console.log("File details:", {
+      name: file.name,
+      size: file.size,
+      type: file.type
+    });
     
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('apiKey', apiKey);
-      
-      const res = await axios.post('/api/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        timeout: 60000, // 60 second timeout
-      });
-      
-      clearInterval(progressInterval);
-      setProgress(100);
-      setResponse(res.data.result);
-    } catch (err) {
-      clearInterval(progressInterval);
-      setProgress(0);
-      
-      if (err.response?.data?.error) {
-        setError(err.response.data.error);
-      } else if (err.code === 'ECONNABORTED') {
-        setError("Request timed out. Please try again with a smaller file.");
-      } else if (err.response?.data?.error?.includes('safety reasons')) {
-        setError("The AI declined to process this content for safety reasons. Please try with different content.");
-      } else {
-        setError("An error occurred while processing your file. Please try again.");
+    const res = await axios.post('/api/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      timeout: 90000, // Increased to 90 seconds
+      onUploadProgress: (progressEvent) => {
+        console.log("Upload progress:", progressEvent);
       }
-      console.error('Upload error:', err);
-    } finally {
-      setLoading(false);
+    });
+    
+    console.log("Response received:", res);
+    clearInterval(progressInterval);
+    setProgress(100);
+    setResponse(res.data.result);
+    
+  } catch (err) {
+    console.error('Detailed upload error:', {
+      message: err.message,
+      response: err.response,
+      status: err.response?.status,
+      data: err.response?.data,
+      stack: err.stack
+    });
+    
+    clearInterval(progressInterval);
+    setProgress(0);
+    
+    // More detailed error handling
+    if (err.response?.status === 404) {
+      setError("API endpoint not found. Please check if the server is running correctly.");
+    } else if (err.response?.status === 500) {
+      setError(`Server error: ${err.response?.data?.error || "Internal server error"}`);
+    } else if (err.response?.data?.error) {
+      setError(err.response.data.error);
+    } else if (err.code === 'ECONNABORTED') {
+      setError("Request timed out. Please try again with a smaller file.");
+    } else if (err.code === 'ERR_NETWORK') {
+      setError("Network error. Please check your internet connection and try again.");
+    } else if (err.message.includes('Network Error')) {
+      setError("Cannot connect to server. Please check if the API is running.");
+    } else {
+      setError(`Upload failed: ${err.message}`);
     }
-  };
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleDownload = () => {
     if (!response) return;
