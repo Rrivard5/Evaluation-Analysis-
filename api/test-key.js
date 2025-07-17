@@ -1,10 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
-
-export const config = {
-  api: {
-    bodyParser: true,
-  },
-};
+const Anthropic = require('@anthropic-ai/sdk');
 
 const validateApiKey = (apiKey) => {
   return apiKey && apiKey.startsWith('sk-ant-') && apiKey.length > 20;
@@ -16,7 +10,6 @@ const testApiKey = async (apiKey) => {
       apiKey: apiKey,
     });
 
-    // Test with a simple request using the correct model
     const response = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 10,
@@ -35,10 +28,9 @@ const testApiKey = async (apiKey) => {
   }
 };
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   console.log('Test key endpoint called with method:', req.method);
   
-  // Add CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -65,7 +57,6 @@ export default async function handler(req, res) {
     }
 
     console.log('Testing API key...');
-    // Test the API key
     const isValid = await testApiKey(apiKey);
     console.log('API key test result:', isValid);
 
@@ -84,4 +75,4 @@ export default async function handler(req, res) {
       valid: false 
     });
   }
-}
+};
