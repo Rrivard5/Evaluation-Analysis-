@@ -10,7 +10,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
-  const [step, setStep] = useState('api-key'); // 'api-key', 'upload', 'confirm', 'processing'
+  const [step, setStep] = useState('api-key');
+  const [compressionStatus, setCompressionStatus] = useState('');
 
   const validateApiKey = (key) => {
     return key && key.startsWith('sk-ant-') && key.length > 20;
@@ -35,8 +36,6 @@ function App() {
     try {
       const response = await axios.post('/api/test-key', {
         apiKey: apiKey
-      }, {
-        timeout: 10000 // 10 second timeout for API validation
       });
       
       if (response.data.valid) {
@@ -46,10 +45,7 @@ function App() {
         setError("Invalid API key. Please check your key and try again.");
       }
     } catch (err) {
-      console.error('API key validation error:', err);
-      if (err.code === 'ECONNABORTED') {
-        setError("Connection timeout. Please try again.");
-      } else if (err.response?.data?.error) {
+      if (err.response?.data?.error) {
         setError(err.response.data.error);
       } else {
         setError("Unable to validate API key. Please check your key and try again.");
@@ -59,15 +55,82 @@ function App() {
     }
   };
 
-  const handleFileChange = (e) => {
+  // PDF Compression function
+  const compressPDF = async (file) => {
+    try {
+      setCompressionStatus('Loading PDF compression library...');
+      
+      // Dynamically import PDF-lib
+      const { PDFDocument } = await import('pdf-lib');
+      
+      setCompressionStatus('Reading PDF file...');
+      const existingPdfBytes = await file.arrayBuffer();
+      
+      setCompressionStatus('Compressing PDF...');
+      const pdfDoc = await PDFDocument.load(existingPdfBytes);
+      
+      // Compress by reducing image quality and removing metadata
+      const pdfBytes = await pdfDoc.save({
+        useObjectStreams: false,
+        addDefaultPage: false,
+        objectsPerTick: 50
+      });
+      
+      // Create a new File object from the compressed bytes
+      const compressedFile = new File([pdfBytes], file.name, {
+        type: 'application/pdf',
+        lastModified: Date.now(),
+      });
+      
+      const compressionRatio = ((file.size - compressedFile.size) / file.size * 100).toFixed(1);
+      setCompressionStatus(`Compression complete! Reduced size by ${compressionRatio}% (${Math.round(file.size / 1024 / 1024)}MB → ${Math.round(compressedFile.size / 1024 / 1024)}MB)`);
+      
+      return compressedFile;
+    } catch (error) {
+      console.error('PDF compression error:', error);
+      setCompressionStatus('Compression failed, using original file');
+      return file;
+    }
+  };
+
+  const handleFileChange = async (e) => {
     const selectedFile = e.target.files[0];
-    if (selectedFile && selectedFile.type === 'application/pdf') {
-      setFile(selectedFile);
-      setError("");
-      setStep('confirm'); // Move to confirmation step
-    } else {
+    if (!selectedFile || selectedFile.type !== 'application/pdf') {
       setError("Please select a valid PDF file.");
       setFile(null);
+      return;
+    }
+
+    setError("");
+    setCompressionStatus('');
+    
+    const maxSize = 4 * 1024 * 1024; // 4MB
+    
+    if (selectedFile.size <= maxSize) {
+      // File is already small enough
+      setFile(selectedFile);
+      setStep('confirm');
+    } else {
+      // File is too large, compress it
+      setLoading(true);
+      setCompressionStatus('File is too large, compressing...');
+      
+      try {
+        const compressedFile = await compressPDF(selectedFile);
+        
+        if (compressedFile.size <= maxSize) {
+          setFile(compressedFile);
+          setStep('confirm');
+        } else {
+          setError(`File is still too large after compression (${Math.round(compressedFile.size / 1024 / 1024)}MB). Please try a smaller file or contact support.`);
+          setFile(null);
+        }
+      } catch (error) {
+        setError("Failed to compress PDF. Please try a smaller file.");
+        setFile(null);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -76,19 +139,20 @@ function App() {
     e.stopPropagation();
   };
 
-  const handleDrop = (e) => {
+  const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile && droppedFile.type === 'application/pdf') {
-      setFile(droppedFile);
-      setError("");
-      setStep('confirm'); // Move to confirmation step
-    } else {
+    const droppedFile = e.target.files[0];
+    if (!droppedFile || droppedFile.type !== 'application/pdf') {
       setError("Please drop a valid PDF file.");
       setFile(null);
+      return;
     }
+
+    // Use the same logic as file input
+    const event = { target: { files: [droppedFile] } };
+    await handleFileChange(event);
   };
 
   const handleConfirmUpload = () => {
@@ -99,6 +163,7 @@ function App() {
   const handleCancelUpload = () => {
     setFile(null);
     setStep('upload');
+    setCompressionStatus('');
     const fileInput = document.getElementById('file-input');
     if (fileInput) fileInput.value = '';
   };
@@ -138,7 +203,7 @@ function App() {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 120000, // 2 minute timeout for processing
+        timeout: 120000,
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
             const uploadPercent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -155,21 +220,13 @@ function App() {
       setStep('results');
       
     } catch (err) {
-      console.error('Upload error:', err);
-      
       clearInterval(progressInterval);
       setProgress(0);
       
-      if (err.code === 'ECONNABORTED') {
-        setError("Request timed out. The file might be too large or the server is busy. Please try again.");
-      } else if (err.response?.status === 413) {
-        setError("File too large. Please try with a smaller PDF file.");
-      } else if (err.response?.status === 500) {
-        setError(`Server error: ${err.response?.data?.error || "Please try again in a moment."}`);
+      if (err.response?.status === 413) {
+        setError("File is still too large. Please try compressing it further or contact support.");
       } else if (err.response?.data?.error) {
         setError(err.response.data.error);
-      } else if (err.message.includes('Network Error')) {
-        setError("Network error. Please check your connection and try again.");
       } else {
         setError(`Upload failed: ${err.message || "Please try again."}`);
       }
@@ -198,6 +255,7 @@ function App() {
     setError("");
     setProgress(0);
     setStep('upload');
+    setCompressionStatus('');
     const fileInput = document.getElementById('file-input');
     if (fileInput) fileInput.value = '';
   };
@@ -210,6 +268,7 @@ function App() {
     setResponse('');
     setError('');
     setProgress(0);
+    setCompressionStatus('');
   };
 
   // API Key Step
@@ -375,6 +434,8 @@ function App() {
                 <h2 className="upload-title">Upload Your PDF</h2>
                 <p className="upload-description">
                   Select or drag and drop a PDF file containing course evaluations
+                  <br />
+                  <small style={{ color: '#718096' }}>Large files will be automatically compressed</small>
                 </p>
                 
                 <div className="file-input-container">
@@ -384,11 +445,38 @@ function App() {
                     accept=".pdf"
                     onChange={handleFileChange}
                     className="file-input"
+                    disabled={loading}
                   />
                   <label htmlFor="file-input" className="file-input-label">
-                    <span>Choose PDF file or drag here</span>
+                    {loading ? (
+                      <span>
+                        <div className="spinner" style={{ width: '16px', height: '16px', display: 'inline-block', marginRight: '8px' }}></div>
+                        Processing...
+                      </span>
+                    ) : (
+                      <span>Choose PDF file or drag here</span>
+                    )}
                   </label>
                 </div>
+
+                {compressionStatus && (
+                  <div style={{ 
+                    background: '#f0f9ff', 
+                    border: '1px solid #0ea5e9', 
+                    borderRadius: '0.5rem', 
+                    padding: '1rem', 
+                    margin: '1rem 0',
+                    color: '#0c4a6e'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 6v6l4 2"/>
+                      </svg>
+                      {compressionStatus}
+                    </div>
+                  </div>
+                )}
 
                 {error && (
                   <div className="error-message">
@@ -453,7 +541,7 @@ function App() {
                   Ready to analyze your course evaluation PDF
                 </p>
                 
-                <div className="file-selected" style={{ marginBottom: '2rem', fontSize: '1.1rem' }}>
+                <div className="file-selected" style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
                     <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
@@ -461,8 +549,31 @@ function App() {
                   <strong>{file?.name}</strong>
                 </div>
 
-                <div style={{ marginBottom: '2rem', color: '#718096' }}>
+                <div style={{ marginBottom: '1rem', color: '#718096' }}>
                   <p>File size: {file ? Math.round(file.size / 1024) : 0} KB</p>
+                </div>
+
+                {compressionStatus && (
+                  <div style={{ 
+                    background: '#f0f9ff', 
+                    border: '1px solid #0ea5e9', 
+                    borderRadius: '0.5rem', 
+                    padding: '1rem', 
+                    margin: '1rem 0',
+                    color: '#0c4a6e',
+                    fontSize: '0.9rem'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M9 12l2 2 4-4"/>
+                        <circle cx="12" cy="12" r="10"/>
+                      </svg>
+                      {compressionStatus}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ marginBottom: '2rem', color: '#718096' }}>
                   <p>This will be processed using AI to extract constructive feedback and positive comments.</p>
                 </div>
 
