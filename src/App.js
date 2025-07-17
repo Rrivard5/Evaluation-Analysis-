@@ -25,6 +25,8 @@ function App() {
   };
 
   const handleApiKeySubmit = async () => {
+    console.log('API Key submit called');
+    
     if (!validateApiKey(apiKey)) {
       setError("Please enter a valid Anthropic API key (starts with 'sk-ant-')");
       return;
@@ -34,18 +36,24 @@ function App() {
     setError("");
     
     try {
+      console.log('Testing API key...');
+      
       // Test the API key with a simple request
       const response = await axios.post('/api/test-key', {
         apiKey: apiKey
       });
       
+      console.log('API key test response:', response.data);
+      
       if (response.data.valid) {
         setApiKeyValid(true);
         setStep('upload');
+        console.log('Step changed to upload');
       } else {
         setError("Invalid API key. Please check your key and try again.");
       }
     } catch (err) {
+      console.error('API key validation error:', err);
       if (err.response?.data?.error) {
         setError(err.response.data.error);
       } else {
@@ -58,6 +66,8 @@ function App() {
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
+    console.log('File selected:', selectedFile);
+    
     if (selectedFile && selectedFile.type === 'application/pdf') {
       setFile(selectedFile);
       setError("");
@@ -77,6 +87,8 @@ function App() {
     e.stopPropagation();
     
     const droppedFile = e.dataTransfer.files[0];
+    console.log('File dropped:', droppedFile);
+    
     if (droppedFile && droppedFile.type === 'application/pdf') {
       setFile(droppedFile);
       setError("");
@@ -100,80 +112,86 @@ function App() {
     return interval;
   };
 
-  // Add this enhanced error handling to your handleUpload function in App.js
-
-const handleUpload = async () => {
-  if (!file) {
-    setError("Please select a PDF file first.");
-    return;
-  }
-
-  console.log("Starting upload process...");
-  setLoading(true);
-  setError("");
-  setResponse("");
-  
-  const progressInterval = simulateProgress();
-  
-  try {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('apiKey', apiKey);
+  const handleUpload = async () => {
+    console.log('Upload started');
+    console.log('Current state:', { file, apiKey: apiKey ? 'present' : 'missing', step });
     
-    console.log("Sending request to /api/upload");
-    console.log("File details:", {
-      name: file.name,
-      size: file.size,
-      type: file.type
-    });
-    
-    const res = await axios.post('/api/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-      timeout: 90000, // Increased to 90 seconds
-      onUploadProgress: (progressEvent) => {
-        console.log("Upload progress:", progressEvent);
-      }
-    });
-    
-    console.log("Response received:", res);
-    clearInterval(progressInterval);
-    setProgress(100);
-    setResponse(res.data.result);
-    
-  } catch (err) {
-    console.error('Detailed upload error:', {
-      message: err.message,
-      response: err.response,
-      status: err.response?.status,
-      data: err.response?.data,
-      stack: err.stack
-    });
-    
-    clearInterval(progressInterval);
-    setProgress(0);
-    
-    // More detailed error handling
-    if (err.response?.status === 404) {
-      setError("API endpoint not found. Please check if the server is running correctly.");
-    } else if (err.response?.status === 500) {
-      setError(`Server error: ${err.response?.data?.error || "Internal server error"}`);
-    } else if (err.response?.data?.error) {
-      setError(err.response.data.error);
-    } else if (err.code === 'ECONNABORTED') {
-      setError("Request timed out. Please try again with a smaller file.");
-    } else if (err.code === 'ERR_NETWORK') {
-      setError("Network error. Please check your internet connection and try again.");
-    } else if (err.message.includes('Network Error')) {
-      setError("Cannot connect to server. Please check if the API is running.");
-    } else {
-      setError(`Upload failed: ${err.message}`);
+    if (!file) {
+      setError("Please select a PDF file first.");
+      return;
     }
-  } finally {
-    setLoading(false);
-  }
-};
+
+    if (!apiKey) {
+      setError("API key is missing.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setResponse("");
+    
+    const progressInterval = simulateProgress();
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('apiKey', apiKey);
+      
+      console.log("Sending request to /api/upload");
+      console.log("File details:", {
+        name: file.name,
+        size: file.size,
+        type: file.type
+      });
+      
+      const res = await axios.post('/api/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 90000,
+        onUploadProgress: (progressEvent) => {
+          console.log("Upload progress:", progressEvent);
+        }
+      });
+      
+      console.log("Response received:", res.data);
+      clearInterval(progressInterval);
+      setProgress(100);
+      setResponse(res.data.result);
+      
+    } catch (err) {
+      console.error('Upload error:', err);
+      console.error('Error details:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status,
+        code: err.code
+      });
+      
+      clearInterval(progressInterval);
+      setProgress(0);
+      
+      // Enhanced error handling
+      if (err.response?.status === 404) {
+        setError("API endpoint not found. Please check if the server is running correctly.");
+      } else if (err.response?.status === 500) {
+        setError(`Server error: ${err.response?.data?.error || "Internal server error"}`);
+      } else if (err.response?.data?.error) {
+        setError(err.response.data.error);
+      } else if (err.code === 'ECONNABORTED') {
+        setError("Request timed out. Please try again with a smaller file.");
+      } else if (err.code === 'ERR_NETWORK') {
+        setError("Network error. Please check your internet connection and try again.");
+      } else if (err.message.includes('Network Error')) {
+        setError("Cannot connect to server. Please check if the API is running.");
+      } else {
+        setError(`Upload failed: ${err.message}`);
+      }
+    } finally {
+      setLoading(false);
+      console.log('Upload process completed');
+    }
+  };
 
   const handleDownload = () => {
     if (!response) return;
@@ -190,6 +208,7 @@ const handleUpload = async () => {
   };
 
   const handleReset = () => {
+    console.log('Reset called');
     setFile(null);
     setResponse("");
     setError("");
@@ -199,6 +218,7 @@ const handleUpload = async () => {
   };
 
   const handleNewApiKey = () => {
+    console.log('New API key requested');
     setStep('api-key');
     setApiKey('');
     setApiKeyValid(false);
@@ -208,7 +228,11 @@ const handleUpload = async () => {
     setProgress(0);
   };
 
+  // Debug logging for renders
+  console.log('App render - Current step:', step, 'Loading:', loading, 'Error:', error);
+
   if (step === 'api-key') {
+    console.log('Rendering API key step');
     return (
       <div className="app">
         <div className="container">
@@ -319,6 +343,7 @@ const handleUpload = async () => {
     );
   }
 
+  console.log('Rendering upload step');
   return (
     <div className="app">
       <div className="container">
