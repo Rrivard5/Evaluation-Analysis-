@@ -1,35 +1,75 @@
 const { Anthropic } = require('@anthropic-ai/sdk');
 
+const processComments = async (text, apiKey) => {
+  const prompt = `You are a kind and constructive assistant helping instructors analyze course evaluations. Your task is to:
+
+1. Filter out any comments that are mean, hurtful, or purely negative without constructive value
+2. Categorize constructive feedback into themes and count frequency
+3. Summarize actionable suggestions with frequency indicators
+4. Extract positive/uplifting comments verbatim
+
+Return the response in this exact format:
+
+## CONSTRUCTIVE FEEDBACK SUMMARY
+
+**Most Frequent Suggestions:**
+• [Theme] (mentioned X times): [Summary of suggestions]
+• [Theme] (mentioned X times): [Summary of suggestions]
+
+**Additional Suggestions:**
+• [Less frequent but valuable feedback]
+
+## POSITIVE COMMENTS
+
+**Encouraging Feedback:**
+"[Exact quote from student]"
+
+"[Exact quote from student]"
+
+**Additional Positive Notes:**
+• [Paraphrased positive feedback that wasn't quotable]
+
+## OVERALL SENTIMENT
+[Brief summary of the overall tone and any patterns you noticed]
+
+Please be thorough but concise, focusing on actionable insights that will help the instructor improve while maintaining their confidence.
+
+Here are the course evaluation comments to analyze:
+${text}`;
+
+  try {
+    const anthropic = new Anthropic({ apiKey });
+
+    const response = await anthropic.messages.create({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 2000,
+      temperature: 0.3,
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    return response.content[0].text;
+  } catch (error) {
+    console.error('Anthropic API error:', error);
+
+    if (error.status === 401) {
+      throw new Error('Invalid API key. Please check your Anthropic API key.');
+    }
+
+    if (error.status === 429) {
+      throw new Error('Rate limit exceeded. Please try again in a moment.');
+    }
+
+    throw new Error('Failed to process comments with AI: ' + error.message);
+  }
+};
+
 const validateApiKey = (apiKey) => {
   return apiKey && apiKey.startsWith('sk-ant-') && apiKey.length > 20;
 };
 
-const testApiKey = async (apiKey) => {
-  try {
-    const anthropic = new Anthropic({
-      apiKey: apiKey,
-    });
-
-    const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 10,
-      messages: [
-        {
-          role: 'user',
-          content: 'Hello'
-        }
-      ]
-    });
-
-    return response.content[0].text !== undefined;
-  } catch (error) {
-    console.error('API key test error:', error);
-    return false;
-  }
-};
-
 module.exports = async function handler(req, res) {
-  console.log('Test key endpoint called with method:', req.method);
+  console.log('=== PROCESS TEXT REQUEST START ===');
+  console.log('Method:', req.method);
   
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -45,34 +85,34 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    console.log('Request body:', req.body);
-    const { apiKey } = req.body;
+    const { text, apiKey, filename } = req.body;
+
+    console.log('Processing text from:', filename);
+    console.log('Text length:', text?.length || 0);
 
     if (!apiKey || !validateApiKey(apiKey)) {
-      console.log('Invalid API key format');
+      return res.status(400).json({ error: 'Valid Anthropic API key required' });
+    }
+
+    if (!text || text.trim().length === 0) {
       return res.status(400).json({ 
-        error: 'Please provide a valid Anthropic API key (starts with sk-ant-)',
-        valid: false 
+        error: 'No text provided. This might be a scanned document or contain only images.' 
       });
     }
 
-    console.log('Testing API key...');
-    const isValid = await testApiKey(apiKey);
-    console.log('API key test result:', isValid);
+    console.log('Processing comments with AI...');
+    const result = await processComments(text, apiKey);
 
-    if (isValid) {
-      res.status(200).json({ valid: true });
-    } else {
-      res.status(401).json({ 
-        error: 'Invalid API key. Please check your key and try again.',
-        valid: false 
-      });
-    }
+    console.log('AI processing successful');
+    console.log('=== PROCESS TEXT REQUEST SUCCESS ===');
+    
+    res.status(200).json({ result });
   } catch (error) {
-    console.error('Test key error:', error);
-    res.status(500).json({ 
-      error: 'Unable to validate API key. Please try again.',
-      valid: false 
+    console.error('=== PROCESS TEXT REQUEST ERROR ===');
+    console.error('Error message:', error.message);
+    
+    res.status(500).json({
+      error: error.message || 'Internal server error'
     });
   }
 };
