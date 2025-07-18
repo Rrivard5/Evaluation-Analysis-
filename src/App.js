@@ -2,21 +2,15 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import './App.css';
 
-// Import our enhanced PDF utilities
-import { PDFUtils } from './utils/pdfUtils';
-
 function App() {
   const [apiKey, setApiKey] = useState('');
   const [apiKeyValid, setApiKeyValid] = useState(false);
   const [file, setFile] = useState(null);
-  const [originalFile, setOriginalFile] = useState(null);
   const [response, setResponse] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [step, setStep] = useState('api-key');
-  const [compressionInfo, setCompressionInfo] = useState(null);
-  const [debugInfo, setDebugInfo] = useState(null);
 
   const validateApiKey = (key) => {
     return key && key.startsWith('sk-ant-') && key.length > 20;
@@ -60,70 +54,17 @@ function App() {
     }
   };
 
-  // Enhanced file change handler with better debugging
-  const handleFileChange = async (e) => {
+  const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
     if (!selectedFile || selectedFile.type !== 'application/pdf') {
       setError("Please select a valid PDF file.");
       setFile(null);
-      setOriginalFile(null);
       return;
     }
 
-    console.log('=== FILE SELECTED ===');
-    console.log('File name:', selectedFile.name);
-    console.log('File size:', (selectedFile.size / 1024 / 1024).toFixed(2), 'MB');
-    console.log('File type:', selectedFile.type);
-
+    console.log('File selected:', selectedFile.name, 'Size:', (selectedFile.size / 1024 / 1024).toFixed(2), 'MB');
+    setFile(selectedFile);
     setError("");
-    setLoading(true);
-    setProgress(0);
-    setCompressionInfo(null);
-    setDebugInfo(null);
-    
-    try {
-      const fileSizeMB = selectedFile.size / 1024 / 1024;
-      setOriginalFile(selectedFile);
-      
-      // If file is large (>5MB), compress it first
-      if (selectedFile.size > 5 * 1024 * 1024) {
-        console.log('File is large, attempting compression...');
-        
-        const compressedFile = await PDFUtils.compressPDF(selectedFile, 0.7, (progress) => {
-          setProgress(progress);
-        });
-        
-        const originalSizeMB = selectedFile.size / 1024 / 1024;
-        const compressedSizeMB = compressedFile.size / 1024 / 1024;
-        const compressionRatio = (compressedSizeMB / originalSizeMB) * 100;
-        
-        setCompressionInfo({
-          originalSize: originalSizeMB,
-          compressedSize: compressedSizeMB,
-          compressionRatio: compressionRatio
-        });
-        
-        setFile(compressedFile);
-        console.log('Compression completed successfully');
-      } else {
-        setFile(selectedFile);
-        console.log('File size is acceptable, no compression needed');
-      }
-      
-      setStep('confirm');
-      
-    } catch (error) {
-      console.error('=== FILE PROCESSING ERROR ===');
-      console.error('Error:', error);
-      console.error('Stack:', error.stack);
-      
-      setError(`File processing failed: ${error.message}`);
-      setFile(null);
-      setOriginalFile(null);
-    } finally {
-      setLoading(false);
-      setProgress(0);
-    }
   };
 
   const handleDragOver = (e) => {
@@ -131,7 +72,7 @@ function App() {
     e.stopPropagation();
   };
 
-  const handleDrop = async (e) => {
+  const handleDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
     
@@ -139,75 +80,12 @@ function App() {
     if (!droppedFile || droppedFile.type !== 'application/pdf') {
       setError("Please drop a valid PDF file.");
       setFile(null);
-      setOriginalFile(null);
       return;
     }
 
-    const event = { target: { files: [droppedFile] } };
-    await handleFileChange(event);
-  };
-
-  // Enhanced text extraction with robust debugging
-  const extractTextClientSide = async (file) => {
-    try {
-      console.log('=== STARTING TEXT EXTRACTION ===');
-      console.log('File for extraction:', file.name);
-      console.log('File size:', (file.size / 1024 / 1024).toFixed(2), 'MB');
-      
-      // Try the robust extraction method
-      const text = await PDFUtils.extractTextRobust(file, (progress) => {
-        console.log('Extraction progress:', progress + '%');
-        setProgress(progress * 0.7);
-      });
-      
-      console.log('=== EXTRACTION RESULTS ===');
-      console.log('Text length:', text.length);
-      console.log('Text preview:', text.substring(0, 200));
-      
-      setDebugInfo({
-        textLength: text.length,
-        preview: text.substring(0, 500),
-        extractionMethod: 'robust'
-      });
-      
-      if (!text || text.trim().length === 0) {
-        throw new Error('No text found in PDF. This might be a scanned document or contain only images.');
-      }
-      
-      if (text.trim().length < 50) {
-        throw new Error(`Very little text extracted (${text.trim().length} characters). PDF might be image-based or corrupted.`);
-      }
-      
-      console.log('Text extraction completed successfully');
-      return text;
-      
-    } catch (error) {
-      console.error('=== TEXT EXTRACTION ERROR ===');
-      console.error('Error:', error);
-      console.error('Stack:', error.stack);
-      
-      setDebugInfo({
-        error: error.message,
-        extractionMethod: 'failed'
-      });
-      
-      throw error;
-    }
-  };
-
-  const handleConfirmUpload = () => {
-    setStep('processing');
-    handleUpload();
-  };
-
-  const handleCancelUpload = () => {
-    setFile(null);
-    setOriginalFile(null);
-    setCompressionInfo(null);
-    setDebugInfo(null);
-    setStep('upload');
-    const fileInput = document.getElementById('file-input');
-    if (fileInput) fileInput.value = '';
+    console.log('File dropped:', droppedFile.name, 'Size:', (droppedFile.size / 1024 / 1024).toFixed(2), 'MB');
+    setFile(droppedFile);
+    setError("");
   };
 
   const handleUpload = async () => {
@@ -220,35 +98,33 @@ function App() {
     setError("");
     setResponse("");
     setProgress(0);
+    setStep('processing');
     
     try {
-      console.log('=== UPLOAD PROCESS START ===');
+      console.log('Starting upload to server...');
       
-      // Extract text using enhanced method
-      const extractedText = await extractTextClientSide(file);
+      // Create FormData for file upload
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('apiKey', apiKey);
       
-      console.log('Text extracted, length:', extractedText.length);
-      setProgress(75);
-      
-      // Send only the text to the server
-      const res = await axios.post('/api/process-text', {
-        text: extractedText,
-        apiKey: apiKey,
-        filename: originalFile ? originalFile.name : file.name
-      }, {
+      // Send to server for processing
+      const res = await axios.post('/api/upload', formData, {
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'multipart/form-data',
         },
-        timeout: 60000,
+        timeout: 120000, // 2 minutes
+        onUploadProgress: (progressEvent) => {
+          const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setProgress(progress);
+        }
       });
       
-      setProgress(100);
       setResponse(res.data.result);
       setStep('results');
       
     } catch (err) {
-      console.error('=== UPLOAD ERROR ===');
-      console.error('Error:', err);
+      console.error('Upload error:', err);
       
       setProgress(0);
       
@@ -279,9 +155,6 @@ function App() {
 
   const handleReset = () => {
     setFile(null);
-    setOriginalFile(null);
-    setCompressionInfo(null);
-    setDebugInfo(null);
     setResponse("");
     setError("");
     setProgress(0);
@@ -295,9 +168,6 @@ function App() {
     setApiKey('');
     setApiKeyValid(false);
     setFile(null);
-    setOriginalFile(null);
-    setCompressionInfo(null);
-    setDebugInfo(null);
     setResponse('');
     setError('');
     setProgress(0);
@@ -459,25 +329,9 @@ function App() {
                   Select or drag and drop a PDF file containing course evaluations
                   <br />
                   <small style={{ color: '#718096' }}>
-                    Large files will be automatically compressed • Debug mode enabled
+                    Server-side processing • All text extraction methods available
                   </small>
                 </p>
-                
-                {loading && (
-                  <div className="progress-container">
-                    <div className="progress-bar">
-                      <div 
-                        className="progress-fill" 
-                        style={{ width: `${progress}%` }}
-                      ></div>
-                    </div>
-                    <p className="progress-text">
-                      {progress < 30 ? "Analyzing PDF..." : 
-                       progress < 70 ? "Compressing file..." : 
-                       "Finalizing..."}
-                    </p>
-                  </div>
-                )}
                 
                 <div className="file-input-container">
                   <input
@@ -486,14 +340,16 @@ function App() {
                     accept=".pdf"
                     onChange={handleFileChange}
                     className="file-input"
-                    disabled={loading}
                   />
                   <label htmlFor="file-input" className="file-input-label">
-                    {loading ? (
-                      <span>
-                        <div className="spinner" style={{ width: '16px', height: '16px', display: 'inline-block', marginRight: '8px' }}></div>
-                        Processing...
-                      </span>
+                    {file ? (
+                      <div className="file-selected">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                          <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
+                        </svg>
+                        <span>{file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+                      </div>
                     ) : (
                       <span>Choose PDF file or drag here</span>
                     )}
@@ -508,150 +364,29 @@ function App() {
                       <line x1="9" y1="9" x2="15" y2="15"/>
                     </svg>
                     {error}
-                    <br />
-                    <small style={{ marginTop: '8px', display: 'block' }}>
-                      Check the browser console (F12) for detailed error information
-                    </small>
                   </div>
                 )}
-
-                {debugInfo && (
-                  <div style={{ 
-                    background: '#f8f9fa', 
-                    border: '1px solid #dee2e6', 
-                    borderRadius: '4px', 
-                    padding: '1rem', 
-                    marginTop: '1rem',
-                    textAlign: 'left',
-                    fontSize: '0.9rem'
-                  }}>
-                    <h4 style={{ margin: '0 0 0.5rem 0', color: '#495057' }}>Debug Information:</h4>
-                    {debugInfo.error ? (
-                      <p style={{ color: '#dc3545', margin: '0' }}>Error: {debugInfo.error}</p>
-                    ) : (
-                      <>
-                        <p style={{ margin: '0.25rem 0' }}>Text length: {debugInfo.textLength}</p>
-                        <p style={{ margin: '0.25rem 0' }}>Method: {debugInfo.extractionMethod}</p>
-                        <details style={{ marginTop: '0.5rem' }}>
-                          <summary style={{ cursor: 'pointer', color: '#007bff' }}>Text Preview</summary>
-                          <pre style={{ 
-                            whiteSpace: 'pre-wrap', 
-                            fontSize: '0.8rem', 
-                            background: '#ffffff',
-                            padding: '0.5rem',
-                            marginTop: '0.5rem',
-                            border: '1px solid #dee2e6',
-                            borderRadius: '4px',
-                            maxHeight: '200px',
-                            overflow: 'auto'
-                          }}>
-                            {debugInfo.preview}
-                          </pre>
-                        </details>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </main>
-
-          <footer className="footer">
-            <p>Built with care for educators everywhere • Powered by Anthropic Claude</p>
-          </footer>
-        </div>
-      </div>
-    );
-  }
-
-  // Confirmation Step
-  if (step === 'confirm') {
-    return (
-      <div className="app">
-        <div className="container">
-          <header className="header">
-            <div className="header-content">
-              <h1 className="title">Course Evaluation Summarizer</h1>
-              <p className="subtitle">
-                Transform your course evaluations into constructive insights with AI
-              </p>
-              <div className="api-key-status">
-                <span className="api-key-indicator">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M9 12l2 2 4-4"/>
-                    <circle cx="12" cy="12" r="10"/>
-                  </svg>
-                  API Key Connected
-                </span>
-                <button onClick={handleNewApiKey} className="btn-link">
-                  Change Key
-                </button>
-              </div>
-            </div>
-          </header>
-
-          <main className="main">
-            <div className="upload-section">
-              <div className="upload-card">
-                <div className="upload-icon">
-                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M9 12l2 2 4-4"/>
-                    <circle cx="12" cy="12" r="10"/>
-                  </svg>
-                </div>
-                
-                <h2 className="upload-title">Confirm Upload</h2>
-                <p className="upload-description">
-                  Ready to analyze your course evaluation PDF
-                </p>
-                
-                <div className="file-selected" style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-                    <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
-                  </svg>
-                  <strong>{originalFile ? originalFile.name : file?.name}</strong>
-                </div>
-
-                <div style={{ marginBottom: '1rem', color: '#718096' }}>
-                  {compressionInfo ? (
-                    <div>
-                      <p><strong>Original size:</strong> {compressionInfo.originalSize.toFixed(2)} MB</p>
-                      <p><strong>Compressed size:</strong> {compressionInfo.compressedSize.toFixed(2)} MB</p>
-                      <p><strong>Compression ratio:</strong> {compressionInfo.compressionRatio.toFixed(1)}% of original</p>
-                      <p style={{ color: '#48bb78', fontSize: '0.9rem', marginTop: '0.5rem' }}>
-                        ✓ File compressed successfully for optimal processing
-                      </p>
-                    </div>
-                  ) : (
-                    <p>File size: {file ? (file.size / 1024 / 1024).toFixed(2) : 0} MB</p>
-                  )}
-                </div>
-
-                <div style={{ marginBottom: '2rem', color: '#718096' }}>
-                  <p>Text will be extracted and analyzed using AI to provide constructive feedback.</p>
-                </div>
 
                 <div className="button-group">
                   <button
-                    onClick={handleConfirmUpload}
+                    onClick={handleUpload}
+                    disabled={!file || loading}
                     className="btn btn-primary"
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M12 1v6m0 0l4-4m-4 4L8 3"/>
-                      <path d="M8 5H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
-                    </svg>
-                    Analyze Evaluations
-                  </button>
-                  
-                  <button
-                    onClick={handleCancelUpload}
-                    className="btn btn-secondary"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M18 6L6 18M6 6l12 12"/>
-                    </svg>
-                    Choose Different File
+                    {loading ? (
+                      <>
+                        <div className="spinner"></div>
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 1v6m0 0l4-4m-4 4L8 3"/>
+                          <path d="M8 5H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
+                        </svg>
+                        Analyze Evaluations
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -689,7 +424,7 @@ function App() {
                 
                 <h2 className="upload-title">Analyzing Your PDF</h2>
                 <p className="upload-description">
-                  Please wait while we process your course evaluations
+                  Please wait while we process your course evaluations on the server
                 </p>
 
                 {loading && (
@@ -701,9 +436,9 @@ function App() {
                       ></div>
                     </div>
                     <p className="progress-text">
-                      {progress < 30 ? "Extracting text from PDF..." : 
-                       progress < 70 ? "Analyzing with AI..." : 
-                       "Generating summary..."}
+                      {progress < 30 ? "Uploading PDF..." : 
+                       progress < 70 ? "Extracting text..." : 
+                       "Analyzing with AI..."}
                     </p>
                   </div>
                 )}
