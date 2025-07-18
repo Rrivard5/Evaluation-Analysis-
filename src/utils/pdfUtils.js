@@ -5,9 +5,16 @@ export class PDFUtils {
       console.log('=== PDF COMPRESSION START ===');
       console.log('File:', file.name, 'Size:', (file.size / 1024 / 1024).toFixed(2), 'MB');
       
-      // Import PDF-lib dynamically
-      const { PDFDocument } = await import('pdf-lib');
-      console.log('PDF-lib imported successfully');
+      // Import PDF-lib dynamically with better error handling
+      let PDFDocument;
+      try {
+        const pdfLib = await import('pdf-lib');
+        PDFDocument = pdfLib.PDFDocument;
+        console.log('PDF-lib imported successfully');
+      } catch (importError) {
+        console.error('Failed to import PDF-lib:', importError);
+        throw new Error('PDF compression library not available');
+      }
       
       const arrayBuffer = await file.arrayBuffer();
       console.log('ArrayBuffer created, size:', arrayBuffer.byteLength);
@@ -61,6 +68,9 @@ export class PDFUtils {
       console.error('Error:', error);
       console.error('Stack:', error.stack);
       console.warn('PDF compression failed, using original file');
+      
+      // Important: Still call onProgress to continue the flow
+      onProgress(55);
       return file;
     }
   }
@@ -70,15 +80,44 @@ export class PDFUtils {
       console.log('=== ADVANCED TEXT EXTRACTION START ===');
       console.log('File:', file.name, 'Size:', (file.size / 1024 / 1024).toFixed(2), 'MB');
       
-      // Import PDF.js - Updated for latest version
+      // Import PDF.js with better error handling
       console.log('Importing PDF.js...');
-      const pdfjsLib = await import('pdfjs-dist');
-      console.log('PDF.js imported successfully');
+      let pdfjsLib;
+      try {
+        pdfjsLib = await import('pdfjs-dist');
+        console.log('PDF.js imported successfully');
+      } catch (importError) {
+        console.error('Failed to import PDF.js:', importError);
+        throw new Error('PDF.js library not available');
+      }
       
-      // Updated worker URL for latest version
-      const workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-      console.log('Worker URL:', workerSrc);
-      pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+      // Try different worker URLs until one works
+      const workerUrls = [
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js',
+        'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
+      ];
+      
+      let workerLoaded = false;
+      for (const workerUrl of workerUrls) {
+        try {
+          console.log('Trying worker URL:', workerUrl);
+          pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+          
+          // Test if worker loads by creating a simple document
+          const testArrayBuffer = await file.arrayBuffer();
+          const testDoc = await pdfjsLib.getDocument({ data: testArrayBuffer.slice(0, 1024) }).promise;
+          console.log('Worker URL works:', workerUrl);
+          workerLoaded = true;
+          break;
+        } catch (workerError) {
+          console.log('Worker URL failed:', workerUrl, workerError.message);
+        }
+      }
+      
+      if (!workerLoaded) {
+        throw new Error('Could not load PDF.js worker');
+      }
       
       console.log('Loading PDF document...');
       const arrayBuffer = await file.arrayBuffer();
@@ -87,12 +126,9 @@ export class PDFUtils {
       const loadingTask = pdfjsLib.getDocument({
         data: arrayBuffer,
         verbosity: 0,
-        cMapUrl: `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/cmaps/`,
-        cMapPacked: true,
-        standardFontDataUrl: `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/standard_fonts/`,
-        disableAutoFetch: false,
-        disableStream: false,
-        disableRange: false
+        disableAutoFetch: true,
+        disableStream: true,
+        disableRange: true
       });
       
       const pdf = await loadingTask.promise;
@@ -122,7 +158,7 @@ export class PDFUtils {
               const nextItem = textContent.items[index + 1];
               let spacing = ' ';
               
-              if (nextItem) {
+              if (nextItem && item.transform && nextItem.transform) {
                 const verticalGap = Math.abs(item.transform[5] - nextItem.transform[5]);
                 const horizontalGap = Math.abs(item.transform[4] - nextItem.transform[4]);
                 
@@ -326,7 +362,7 @@ export class PDFUtils {
   // Your original extraction method as fallback
   static async extractTextOriginal(file) {
     const pdfjsLib = await import('pdfjs-dist');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
