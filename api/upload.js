@@ -3,12 +3,6 @@ const formidable = require('formidable');
 const pdf = require('pdf-parse');
 const fs = require('fs');
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
 const parseForm = (req) => {
   return new Promise((resolve, reject) => {
     // Create the form instance correctly
@@ -197,45 +191,13 @@ const extractPDFText = async (file) => {
       console.log('Method 4 failed:', error.message);
     }
     
-    // Method 5: Try individual pages with different options
-    console.log('=== METHOD 5: Individual Page Extraction ===');
-    try {
-      const pdfData = await pdf(dataBuffer);
-      let allText = '';
-      
-      for (let page = 1; page <= pdfData.numpages; page++) {
-        try {
-          const pageData = await pdf(dataBuffer, {
-            first: page,
-            last: page,
-            normalizeWhitespace: true,
-            disableCombineTextItems: false
-          });
-          
-          if (pageData.text && pageData.text.trim().length > 0) {
-            allText += pageData.text + '\n';
-            console.log(`Page ${page} text length:`, pageData.text.length);
-          }
-        } catch (pageError) {
-          console.log(`Page ${page} failed:`, pageError.message);
-        }
-      }
-      
-      if (allText.length > 100) {
-        console.log('SUCCESS: Method 5 worked');
-        return allText;
-      }
-      
-    } catch (error) {
-      console.log('Method 5 failed:', error.message);
-    }
-    
     console.log('=== ALL METHODS FAILED ===');
     
     // If we get here, let's provide detailed diagnostics
     console.log('PDF Diagnostics:');
     console.log('- File size:', dataBuffer.length);
     console.log('- PDF version:', dataBuffer.slice(0, 8).toString());
+    const pdfString = dataBuffer.toString('latin1');
     console.log('- Contains "stream":', pdfString.includes('stream'));
     console.log('- Contains "BT":', pdfString.includes('BT'));
     console.log('- Contains "Tj":', pdfString.includes('Tj'));
@@ -317,7 +279,7 @@ const validateApiKey = (apiKey) => {
   return apiKey && apiKey.startsWith('sk-ant-') && apiKey.length > 20;
 };
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   console.log('=== UPLOAD REQUEST START ===');
   console.log('Method:', req.method);
   console.log('Content-Type:', req.headers['content-type']);
@@ -412,4 +374,4 @@ export default async function handler(req, res) {
       }
     }
   }
-}
+};
