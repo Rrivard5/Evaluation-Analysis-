@@ -1,10 +1,4 @@
-const Anthropic = require('@anthropic-ai/sdk');
-
-export const config = {
-  api: {
-    bodyParser: true,
-  },
-};
+const { Anthropic } = require('@anthropic-ai/sdk');
 
 const validateApiKey = (apiKey) => {
   return apiKey && apiKey.startsWith('sk-ant-') && apiKey.length > 20;
@@ -34,7 +28,7 @@ const testApiKey = async (apiKey) => {
   }
 };
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   console.log('Test key endpoint called with method:', req.method);
   
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -81,4 +75,4 @@ export default async function handler(req, res) {
       valid: false 
     });
   }
-}
+};
