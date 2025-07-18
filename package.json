@@ -18,13 +18,13 @@
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^3.11.174"
   },
-  "scripts": {
-    "start": "react-scripts start",
-    "server": "node server.js",
-    "dev": "concurrently \"npm run server\" \"npm run start\"",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+ "scripts": {
+  "start": "react-scripts start",
+  "server": "node server.js",
+  "dev": "concurrently \"npm run server\" \"npm run start\"",
+  "build": "react-scripts build",
+  "test": "react-scripts test",
+  "eject": "react-scripts eject"
   },
   "eslintConfig": {
     "extends": [
