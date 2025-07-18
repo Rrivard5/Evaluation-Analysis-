@@ -2,7 +2,7 @@
   "name": "course-evaluation-summarizer",
   "version": "0.1.0",
   "private": true,
- {
+  "type": "module",
   "dependencies": {
     "@testing-library/jest-dom": "^5.16.4",
     "@testing-library/react": "^13.3.0",
@@ -17,8 +17,7 @@
     "pdf-parse": "^1.1.1",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^3.11.174"
-  }
-}
+  },
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
