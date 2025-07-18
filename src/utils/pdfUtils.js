@@ -138,7 +138,7 @@ export class PDFUtils {
       const progressStart = 60;
       const progressRange = 35;
       
-      // Extract text from all pages
+      // Extract text from all pages (don't skip by page number)
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         try {
           console.log(`Processing page ${pageNum}/${pdf.numPages}`);
@@ -220,31 +220,109 @@ export class PDFUtils {
     
     console.log('Cleaning text, original length:', text.length);
     
-    // Remove excessive whitespace but preserve structure
+    // Step 1: Remove common PDF artifacts and control characters
     let cleaned = text
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .replace(/\t+/g, '\t')
-      .replace(/[ ]{2,}/g, ' ')
-      .trim();
-    
-    // Remove common PDF artifacts
-    cleaned = cleaned
       .replace(/\x00/g, '') // Remove null characters
       .replace(/\ufffd/g, '') // Remove replacement characters
-      .replace(/[^\x20-\x7E\n\t]/g, ' ') // Replace non-printable chars
-      .replace(/\s+/g, ' ') // Normalize whitespace
-      .replace(/\n\s*\n/g, '\n\n'); // Clean up line breaks
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '') // Remove control characters
+      .replace(/[^\x20-\x7E\n\t\u00A0-\uFFFF]/g, ' '); // Keep only printable chars + unicode
+    
+    // Step 2: Remove page headers/footers and table artifacts
+    cleaned = cleaned
+      .replace(/--- Page \d+ ---/g, '') // Remove page markers
+      .replace(/Page \d+ of \d+/gi, '') // Remove page numbers
+      .replace(/\d{6}-\w+-\w+-\w+-\d+-\d+/g, '') // Remove document IDs like "202530-Rivard-Rebecca-BIO-1185-001-35746"
+      .replace(/^\s*\d+\/\d+\s*$/gm, '') // Remove page numbers like "1/5"
+      .replace(/^\s*\d+\s*$/gm, '') // Remove standalone numbers
+      .replace(/^\s*[|+\-=]{3,}\s*$/gm, '') // Remove table borders
+      .replace(/\|\s*\|/g, ' ') // Replace empty table cells
+      .replace(/\s*\|\s*/g, ' ') // Replace table separators with spaces
+      .replace(/_{3,}/g, ' ') // Replace underscores (form lines)
+      .replace(/\.{3,}/g, ' ') // Replace dot leaders
+      .replace(/\s*\.\s*\.\s*\./g, ' '); // Replace scattered dots
+    
+    // Step 3: Identify and extract student comment sections
+    const lines = cleaned.split('\n');
+    const commentLines = [];
+    let inCommentSection = false;
+    let currentComment = '';
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // Detect start of comment sections
+      if (line.includes('What aspects') && line.includes('contributed most') ||
+          line.includes('What aspects') && line.includes('could be changed') ||
+          line.includes('Comments') && line.length < 20 ||
+          line.includes('comment') && line.length < 50) {
+        inCommentSection = true;
+        commentLines.push('\n=== ' + line + ' ===');
+        continue;
+      }
+      
+      // Skip table headers and numeric data
+      if (line.match(/^\s*Show labels\s*$/i) ||
+          line.match(/^\s*Dept\.\s+Dept\.\s+Dept\./i) ||
+          line.match(/^\s*Avg\.\s+Avg\.\s+\d+th/i) ||
+          line.match(/^\s*[A-Z]{2,3}\s+\d+\s+\d+\s+\d+/i) || // Rating scales
+          line.match(/^\s*\d+\s+\d+\s+\d+\s+\d+\s+\d+/)) { // Numeric tables
+        inCommentSection = false;
+        continue;
+      }
+      
+      // Skip institutional headers
+      if (line.includes('Villanova University') ||
+          line.includes('Course and Teacher Survey') ||
+          line.includes('Office of Strategic Planning') ||
+          line.includes('Benchmark Groups') ||
+          line.includes('Rebecca Rivard') ||
+          line.includes('BIO 1185-001') ||
+          line.includes('Spring 2025') ||
+          line.includes('College of Liberal Arts')) {
+        continue;
+      }
+      
+      // If we're in a comment section, keep substantial text
+      if (inCommentSection && line.length > 15) {
+        // Check if this looks like an actual student comment
+        if (line.match(/[a-z].*[a-z]/i) && // Contains letters
+            line.split(' ').length >= 5 && // At least 5 words
+            !line.match(/^\s*[A-Z\s]+:?\s*$/)) { // Not just a header
+          commentLines.push(line);
+        }
+      }
+      
+      // Detect end of comment sections (when we hit more structured data)
+      if (line.match(/^\s*\d+\s+\d+\s+\d+/) || // Numeric tables
+          line.match(/^\s*[A-Z]{2,3}\s*$/)) { // Category codes
+        inCommentSection = false;
+      }
+    }
+    
+    cleaned = commentLines.join('\n');
+    
+    // Step 4: Final cleanup and normalization
+    cleaned = cleaned
+      .replace(/\n{3,}/g, '\n\n') // Max 2 consecutive newlines
+      .replace(/\t+/g, ' ') // Replace tabs with spaces
+      .replace(/[ ]{2,}/g, ' ') // Replace multiple spaces with single
+      .replace(/\n\s*\n/g, '\n\n') // Clean up line breaks
+      .replace(/([.!?])\s*([A-Z])/g, '$1 $2') // Fix sentence spacing
+      .trim();
     
     console.log('Text after cleaning:', cleaned.length);
+    console.log('Removed', (text.length - cleaned.length), 'characters');
     
-    // Truncate if too long
-    const maxLength = 100000; // 100KB limit
-    if (cleaned.length > maxLength) {
-      cleaned = cleaned.substring(0, maxLength) + '\n\n[Text truncated due to length]';
-      console.log('Text truncated to', maxLength, 'characters');
+    // Step 5: Add a helpful header for the AI
+    if (cleaned.length > 50) {
+      cleaned = `STUDENT COURSE EVALUATION COMMENTS:\n\n${cleaned}`;
     }
+    
+    // Step 6: Show what we extracted for debugging
+    console.log('Extracted student comments preview:');
+    console.log(cleaned.substring(0, 500));
     
     return cleaned;
   }
