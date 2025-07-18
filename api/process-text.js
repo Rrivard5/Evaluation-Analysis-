@@ -1,4 +1,4 @@
-const { Anthropic } = require('@anthropic-ai/sdk');
+const Anthropic = require('@anthropic-ai/sdk');
 
 const processComments = async (text, apiKey) => {
   const prompt = `You are a kind and constructive assistant helping instructors analyze course evaluations. Your task is to:
